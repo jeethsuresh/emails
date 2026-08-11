@@ -66,6 +66,22 @@ func Register(app core.App) {
 				"snippet":   rec.GetString("snippet"),
 			})
 		})
+		e.Router.POST("/api/email/messages/{id}/move", func(re *core.RequestEvent) error {
+			id := re.Request.PathValue("id")
+			var req moveRequest
+			if err := re.BindBody(&req); err != nil {
+				return re.BadRequestError("invalid json", err)
+			}
+			msg, folder, err := MoveMessage(e.App, id, req)
+			if err != nil {
+				return re.BadRequestError(err.Error(), err)
+			}
+			return re.JSON(200, map[string]any{
+				"ok":       true,
+				"id":       msg.Id,
+				"folderId": folder.Id,
+			})
+		})
 		e.Router.POST("/api/email/account", func(re *core.RequestEvent) error {
 			var m map[string]any
 			if err := re.BindBody(&m); err != nil {

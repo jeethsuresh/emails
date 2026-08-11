@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pocketbase/dbx"
@@ -97,11 +98,21 @@ func folderExcludedForMessage(app core.App, msg *core.Record) (bool, error) {
 	return FolderIsExcludedFromAnalysis(folder.GetString("name"), folder.GetString("role")), nil
 }
 
+// enqueueMu serializes upsertPending's check-then-insert so two concurrent
+// Enqueue calls for the same message can't both observe "no existing row"
+// and both insert one. The unique index on message_analysis.message (see
+// mailstore) is the hard backstop; this mutex avoids relying on it via a
+// Save error in the common case.
+var enqueueMu sync.Mutex
+
 // upsertPending creates a pending message_analysis row for messageID, or
 // leaves an existing row untouched if one already exists (regardless of its
 // status) so we never create duplicate pending rows or disturb an
 // in-flight/finished analysis. Returns whether a new row was created.
 func upsertPending(app core.App, messageID string) (bool, error) {
+	enqueueMu.Lock()
+	defer enqueueMu.Unlock()
+
 	col, err := app.FindCollectionByNameOrId("message_analysis")
 	if err != nil {
 		return false, err
@@ -122,38 +133,15 @@ func upsertPending(app core.App, messageID string) (bool, error) {
 
 // Start runs the crash-recovery/backlog sweep once, then launches the
 // single-flight worker goroutine. Safe to call once at server start.
+//
+// The "created"/"updated" autodate fields the worker relies on for FIFO
+// ordering are declared on message_analysis in mailstore (both the create
+// def and ensureLLMAnalysisSchemaFields), not here.
 func Start(app core.App) {
-	if err := ensureTimestampFields(app); err != nil {
-		logProgress("ensure timestamp fields: %v", err)
-	}
 	go func() {
 		startupSweep(app)
 		runWorker(app)
 	}()
-}
-
-// ensureTimestampFields adds "created"/"updated" autodate fields to
-// message_analysis if missing. The base collection definition in
-// mailstore doesn't declare them, but the worker needs "created" to find
-// the oldest pending row in FIFO order.
-func ensureTimestampFields(app core.App) error {
-	col, err := app.FindCollectionByNameOrId("message_analysis")
-	if err != nil {
-		return err
-	}
-	changed := false
-	if col.Fields.GetByName("created") == nil {
-		col.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
-		changed = true
-	}
-	if col.Fields.GetByName("updated") == nil {
-		col.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	return app.Save(col)
 }
 
 func startupSweep(app core.App) {

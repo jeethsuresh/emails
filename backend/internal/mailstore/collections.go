@@ -102,6 +102,9 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.TextField{Name: "error"})
 			c.Fields.Add(&core.NumberField{Name: "fail_count"})
 			c.Fields.Add(&core.TextField{Name: "analyzed_at"})
+			c.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
+			c.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
+			c.AddIndex(messageAnalysisMessageUniqueIndex, true, "`message`", "")
 		}},
 		{"app_settings", func(c *core.Collection) {
 			c.Fields.Add(&core.TextField{Name: "llm_model"})
@@ -225,6 +228,12 @@ func ensureMessageBodyLimits(app core.App) error {
 	return ensureLLMAnalysisSchemaFields(app)
 }
 
+// messageAnalysisMessageUniqueIndex names the unique index enforcing at most
+// one message_analysis row per message. PocketBase v0.31's core.TextField has
+// no per-field Unique flag, so uniqueness is expressed as a collection index
+// instead (see core.Collection.AddIndex).
+const messageAnalysisMessageUniqueIndex = "idx_message_analysis_message"
+
 func ensureLLMAnalysisSchemaFields(app core.App) error {
 	ensure := func(name string, fields []core.Field, maxes map[string]int) error {
 		col, err := app.FindCollectionByNameOrId(name)
@@ -268,7 +277,12 @@ func ensureLLMAnalysisSchemaFields(app core.App) error {
 		&core.TextField{Name: "error"},
 		&core.NumberField{Name: "fail_count"},
 		&core.TextField{Name: "analyzed_at"},
+		&core.AutodateField{Name: "created", OnCreate: true},
+		&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true},
 	}, map[string]int{"suggested_reply": 100_000}); err != nil {
+		return err
+	}
+	if err := ensureMessageAnalysisUniqueIndex(app); err != nil {
 		return err
 	}
 	if err := ensure("app_settings", []core.Field{
@@ -291,6 +305,21 @@ func ensureLLMAnalysisSchemaFields(app core.App) error {
 		&core.TextField{Name: "source_message"},
 		&core.TextField{Name: "created_at"},
 	}, map[string]int{"notes": 20_000})
+}
+
+// ensureMessageAnalysisUniqueIndex adds the unique index on message_analysis.message
+// if missing, guarding against duplicate analysis rows for the same message
+// (belt-and-suspenders alongside the analyzer's enqueue-time check).
+func ensureMessageAnalysisUniqueIndex(app core.App) error {
+	col, err := app.FindCollectionByNameOrId("message_analysis")
+	if err != nil {
+		return err
+	}
+	if col.GetIndex(messageAnalysisMessageUniqueIndex) != "" {
+		return nil
+	}
+	col.AddIndex(messageAnalysisMessageUniqueIndex, true, "`message`", "")
+	return app.Save(col)
 }
 
 func UpsertAccount(app core.App, m map[string]any) error {

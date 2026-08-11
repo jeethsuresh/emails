@@ -108,7 +108,11 @@ export function MessageView({
         <time>{message.date ? new Date(message.date).toLocaleString() : ""}</time>
       </header>
       {analysis && onApplyAnalysis ? (
-        <AnalysisPanel analysis={analysis} onApply={onApplyAnalysis} />
+        <AnalysisPanel
+          key={analysis.message}
+          analysis={analysis}
+          onApply={onApplyAnalysis}
+        />
       ) : null}
       {loadingBody ? (
         <p className="hint">Loading body…</p>

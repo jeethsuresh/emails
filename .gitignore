@@ -1,7 +1,10 @@
 node_modules/
 dist/
 dist-electron/
+.vite/
 backend/pb_data/
+backend/native
+assets/email-backend
 *.wasm
 !native/email_core.wasm
 .DS_Store

@@ -115,12 +115,15 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.TextField{Name: "notes", Max: 20_000})
 			c.Fields.Add(&core.TextField{Name: "source_message"})
 			c.Fields.Add(&core.TextField{Name: "created_at"})
+			c.Fields.Add(&core.TextField{Name: "starts_at"})
+			c.Fields.Add(&core.TextField{Name: "ends_at"})
 		}},
 		{"todos", func(c *core.Collection) {
 			c.Fields.Add(&core.TextField{Name: "title"})
 			c.Fields.Add(&core.TextField{Name: "notes", Max: 20_000})
 			c.Fields.Add(&core.TextField{Name: "source_message"})
 			c.Fields.Add(&core.TextField{Name: "created_at"})
+			c.Fields.Add(&core.TextField{Name: "deadline"})
 		}},
 	}
 
@@ -296,6 +299,8 @@ func ensureLLMAnalysisSchemaFields(app core.App) error {
 		&core.TextField{Name: "notes", Max: 20_000},
 		&core.TextField{Name: "source_message"},
 		&core.TextField{Name: "created_at"},
+		&core.TextField{Name: "starts_at"},
+		&core.TextField{Name: "ends_at"},
 	}, map[string]int{"notes": 20_000}); err != nil {
 		return err
 	}
@@ -304,6 +309,7 @@ func ensureLLMAnalysisSchemaFields(app core.App) error {
 		&core.TextField{Name: "notes", Max: 20_000},
 		&core.TextField{Name: "source_message"},
 		&core.TextField{Name: "created_at"},
+		&core.TextField{Name: "deadline"},
 	}, map[string]int{"notes": 20_000})
 }
 

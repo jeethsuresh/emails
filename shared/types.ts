@@ -43,6 +43,25 @@ export interface AnalyzerSettings {
   baseUrl: string;
 }
 
+export interface TodoItem {
+  id: string;
+  title: string;
+  notes: string;
+  source_message: string;
+  created_at: string;
+  deadline: string;
+}
+
+export interface EventItem {
+  id: string;
+  title: string;
+  notes: string;
+  source_message: string;
+  created_at: string;
+  starts_at: string;
+  ends_at: string;
+}
+
 export interface MailAccountInput {
   email: string;
   imapHost: string;

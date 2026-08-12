@@ -6,11 +6,15 @@ import { AccountSetup } from "./components/AccountSetup";
 import { FolderList } from "./components/FolderList";
 import { MessageList } from "./components/MessageList";
 import { MessageView } from "./components/MessageView";
-import { SyncBadge, SyncLivePanel } from "./components/SyncBadge";
+import { SyncBadge } from "./components/SyncBadge";
 import { ComposeModal } from "./components/ComposeModal";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { TodoList } from "./components/TodoList";
+import { EventList } from "./components/EventList";
 
 const ANALYSIS_POLL_MS = 15_000;
+
+type AppTab = "mail" | "todos" | "events";
 
 interface Folder {
   id: string;
@@ -65,6 +69,7 @@ export function App() {
   const [ready, setReady] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [analysisByMessage, setAnalysisByMessage] = useState<Record<string, MessageAnalysis>>({});
+  const [activeTab, setActiveTab] = useState<AppTab>("mail");
 
   const selectedFolderRef = useRef<string | null>(null);
   const queryRef = useRef("");
@@ -318,7 +323,6 @@ export function App() {
           }}
         />
         <SyncBadge status={status} />
-        <SyncLivePanel status={status} />
         {!ready && <p className="hint">Connecting to local backend…</p>}
       </div>
     );
@@ -328,13 +332,40 @@ export function App() {
     <div className="shell">
       <header className="topbar">
         <div className="brand">Email</div>
-        <input
-          className="search"
-          placeholder="Search subject, from, or body…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Search mail"
-        />
+        <nav className="app-tabs" aria-label="Primary">
+          <button
+            type="button"
+            className={activeTab === "mail" ? "tab active" : "tab"}
+            onClick={() => setActiveTab("mail")}
+          >
+            Mail
+          </button>
+          <button
+            type="button"
+            className={activeTab === "todos" ? "tab active" : "tab"}
+            onClick={() => setActiveTab("todos")}
+          >
+            Todos
+          </button>
+          <button
+            type="button"
+            className={activeTab === "events" ? "tab active" : "tab"}
+            onClick={() => setActiveTab("events")}
+          >
+            Events
+          </button>
+        </nav>
+        {activeTab === "mail" ? (
+          <input
+            className="search"
+            placeholder="Search subject, from, or body…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search mail"
+          />
+        ) : (
+          <div className="search-spacer" />
+        )}
         <button type="button" onClick={() => setComposeOpen(true)}>
           Compose
         </button>
@@ -347,46 +378,49 @@ export function App() {
         <SyncBadge status={status} />
       </header>
 
-      <SyncLivePanel status={status} />
+      {activeTab === "mail" ? (
+        <div className="layout">
+          <FolderList folders={folders} selected={selectedFolder} onSelect={selectFolder} />
+          <MessageList
+            messages={messages}
+            selectedId={selectedMessage?.id ?? null}
+            totalCount={messageTotal}
+            loading={loadingMessages}
+            hasMore={false}
+            emptyLabel={
+              loadingMessages && messages.length === 0
+                ? "Loading…"
+                : query.trim()
+                  ? "No matching emails"
+                  : "No messages in this folder"
+            }
+            onSelect={(m) => void selectMessage(m as Message)}
+            onLoadMore={loadMoreMessages}
+            analysisByMessage={analysisByMessage}
+            onToggleFlag={async (msg) => {
+              await pb.collection("messages").update(msg.id, { flagged: !msg.flagged });
+              setMessages((prev) =>
+                prev.map((row) => (row.id === msg.id ? { ...row, flagged: !msg.flagged } : row)),
+              );
+            }}
+            onToggleSeen={async (msg) => {
+              await pb.collection("messages").update(msg.id, { seen: !msg.seen });
+              setMessages((prev) =>
+                prev.map((row) => (row.id === msg.id ? { ...row, seen: !msg.seen } : row)),
+              );
+            }}
+          />
+          <MessageView
+            message={selectedMessage}
+            loadingBody={loadingBody}
+            analysis={selectedMessage ? analysisByMessage[selectedMessage.id] : undefined}
+            onApplyAnalysis={applyAnalysis}
+          />
+        </div>
+      ) : null}
 
-      <div className="layout">
-        <FolderList folders={folders} selected={selectedFolder} onSelect={selectFolder} />
-        <MessageList
-          messages={messages}
-          selectedId={selectedMessage?.id ?? null}
-          totalCount={messageTotal}
-          loading={loadingMessages}
-          hasMore={false}
-          emptyLabel={
-            loadingMessages && messages.length === 0
-              ? "Loading…"
-              : query.trim()
-                ? "No matching emails"
-                : "No messages in this folder"
-          }
-          onSelect={(m) => void selectMessage(m as Message)}
-          onLoadMore={loadMoreMessages}
-          analysisByMessage={analysisByMessage}
-          onToggleFlag={async (msg) => {
-            await pb.collection("messages").update(msg.id, { flagged: !msg.flagged });
-            setMessages((prev) =>
-              prev.map((row) => (row.id === msg.id ? { ...row, flagged: !msg.flagged } : row)),
-            );
-          }}
-          onToggleSeen={async (msg) => {
-            await pb.collection("messages").update(msg.id, { seen: !msg.seen });
-            setMessages((prev) =>
-              prev.map((row) => (row.id === msg.id ? { ...row, seen: !msg.seen } : row)),
-            );
-          }}
-        />
-        <MessageView
-          message={selectedMessage}
-          loadingBody={loadingBody}
-          analysis={selectedMessage ? analysisByMessage[selectedMessage.id] : undefined}
-          onApplyAnalysis={applyAnalysis}
-        />
-      </div>
+      {activeTab === "todos" ? <TodoList pb={pb} active={activeTab === "todos"} /> : null}
+      {activeTab === "events" ? <EventList pb={pb} active={activeTab === "events"} /> : null}
 
       {composeOpen && (
         <ComposeModal
@@ -398,6 +432,7 @@ export function App() {
       {settingsOpen && (
         <SettingsScreen
           pb={pb}
+          status={status}
           onClose={() => setSettingsOpen(false)}
           onSaved={async () => {
             await refreshFolders();

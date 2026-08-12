@@ -74,12 +74,41 @@ button:hover {
   min-width: 4.5rem;
 }
 
+.app-tabs {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.app-tabs .tab {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.4rem 0.7rem;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.app-tabs .tab:hover {
+  color: var(--ink);
+  border-color: transparent;
+}
+
+.app-tabs .tab.active {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+}
+
 .search {
   flex: 1;
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0.55rem 1rem;
   background: #fff;
+}
+
+.search-spacer {
+  flex: 1;
 }
 
 .layout {
@@ -445,7 +474,7 @@ button:hover {
 }
 
 .sync-live {
-  margin: 0.5rem 1rem 0;
+  margin: 0;
   padding: 0.75rem 1rem;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -493,6 +522,78 @@ button:hover {
   gap: 0.15rem;
 }
 
+.settings-sync-logs {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.task-list {
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  padding: 1.25rem 1.5rem 2rem;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+
+.task-list-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.task-list-header h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.task-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.task-row {
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 0.35rem;
+}
+
+.task-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: baseline;
+}
+
+.task-main time {
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.task-notes {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.task-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+}
+
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: 1fr;
@@ -504,5 +605,10 @@ button:hover {
     border-right: 0;
     border-bottom: 1px solid var(--line);
     max-height: 220px;
+  }
+
+  .task-main {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

@@ -93,6 +93,8 @@ export async function applyAnalysisAction(
         notes: "",
         source_message: analysis.message,
         created_at: new Date().toISOString(),
+        starts_at: "",
+        ends_at: "",
       });
       return;
     case "add_todo":
@@ -101,6 +103,7 @@ export async function applyAnalysisAction(
         notes: "",
         source_message: analysis.message,
         created_at: new Date().toISOString(),
+        deadline: "",
       });
       return;
     case "":

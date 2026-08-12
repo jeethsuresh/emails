@@ -3,7 +3,8 @@ import type PocketBase from "pocketbase";
 import { ConnectionForm } from "./ConnectionForm";
 import { emptyConnection, fromAccountRecord, type ConnectionSettings } from "../lib/connection";
 import { getAnalyzerSettings, saveAnalyzerSettings } from "../lib/analysis";
-import type { AnalyzerSettings } from "../../shared/types";
+import { SyncLivePanel } from "./SyncBadge";
+import type { AnalyzerSettings, SyncStatus } from "../../shared/types";
 
 function AnalyzerSettingsForm({ pb }: { pb: PocketBase }) {
   const [form, setForm] = useState<AnalyzerSettings | null>(null);
@@ -65,12 +66,27 @@ function AnalyzerSettingsForm({ pb }: { pb: PocketBase }) {
   );
 }
 
+function SyncLogsSection({ status }: { status: SyncStatus | null }) {
+  return (
+    <section className="settings-sync-logs">
+      <h2 className="form-section">Sync logs</h2>
+      {!status ? (
+        <p className="hint">Waiting for sync status…</p>
+      ) : (
+        <SyncLivePanel status={status} alwaysShow />
+      )}
+    </section>
+  );
+}
+
 export function SettingsScreen({
   pb,
+  status,
   onClose,
   onSaved,
 }: {
   pb: PocketBase;
+  status: SyncStatus | null;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }) {
@@ -113,6 +129,7 @@ export function SettingsScreen({
           />
         )}
         <AnalyzerSettingsForm pb={pb} />
+        <SyncLogsSection status={status} />
       </div>
     </div>
   );

@@ -53,8 +53,15 @@ button:hover {
 
 .shell {
   height: 100%;
-  display: grid;
-  grid-template-rows: auto 1fr;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.shell > .layout,
+.shell > .task-list {
+  flex: 1;
+  min-height: 0;
 }
 
 .topbar {
@@ -530,10 +537,15 @@ button:hover {
 
 .task-list {
   min-height: 0;
-  height: 100%;
   overflow: auto;
   padding: 1.25rem 1.5rem 2rem;
-  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+
+.task-list .empty {
+  padding: 1.25rem 0.25rem;
+  font-size: 1rem;
+  color: var(--muted);
 }
 
 .task-list-header {

@@ -2,14 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import type PocketBase from "pocketbase";
 import type { EventItem } from "../../shared/types";
 
-function formatWhen(value: string): string {
-  if (!value.trim()) return "";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
+function formatWhen(value: string | null | undefined): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
   return d.toLocaleString();
 }
 
-function formatRange(startsAt: string, endsAt: string): string {
+function formatRange(
+  startsAt: string | null | undefined,
+  endsAt: string | null | undefined,
+): string {
   const start = formatWhen(startsAt);
   const end = formatWhen(endsAt);
   if (!start && !end) return "No time";
@@ -20,8 +24,8 @@ function formatRange(startsAt: string, endsAt: string): string {
 
 function sortEvents(items: EventItem[]): EventItem[] {
   return [...items].sort((a, b) => {
-    const sa = a.starts_at?.trim() ?? "";
-    const sb = b.starts_at?.trim() ?? "";
+    const sa = (a.starts_at ?? "").trim();
+    const sb = (b.starts_at ?? "").trim();
     if (!sa && !sb) return (b.created_at || "").localeCompare(a.created_at || "");
     if (!sa) return 1;
     if (!sb) return -1;
@@ -66,22 +70,23 @@ export function EventList({ pb, active }: { pb: PocketBase; active: boolean }) {
         </button>
       </header>
       {error ? <p className="error">{error}</p> : null}
+      {loading && items.length === 0 ? <p className="hint">Loading events…</p> : null}
       <ul>
         {items.map((item) => (
           <li key={item.id} className="task-row">
             <div className="task-main">
               <strong>{item.title || "(untitled)"}</strong>
-              <time dateTime={item.starts_at || item.ends_at || undefined}>
+              <time dateTime={(item.starts_at || item.ends_at || undefined) ?? undefined}>
                 {formatRange(item.starts_at, item.ends_at)}
               </time>
             </div>
-            {item.notes?.trim() ? <p className="task-notes">{item.notes}</p> : null}
+            {(item.notes ?? "").trim() ? <p className="task-notes">{item.notes}</p> : null}
             {item.source_message ? (
               <p className="task-meta">From message {item.source_message}</p>
             ) : null}
           </li>
         ))}
-        {!loading && items.length === 0 ? (
+        {!loading && items.length === 0 && !error ? (
           <li className="empty">No events yet — apply an analysis suggestion or add one later.</li>
         ) : null}
       </ul>

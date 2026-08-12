@@ -2,17 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import type PocketBase from "pocketbase";
 import type { TodoItem } from "../../shared/types";
 
-function formatDeadline(value: string): string {
-  if (!value.trim()) return "No deadline";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
+function formatDeadline(value: string | null | undefined): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "No deadline";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
   return d.toLocaleString();
 }
 
 function sortTodos(items: TodoItem[]): TodoItem[] {
   return [...items].sort((a, b) => {
-    const da = a.deadline?.trim() ?? "";
-    const db = b.deadline?.trim() ?? "";
+    const da = (a.deadline ?? "").trim();
+    const db = (b.deadline ?? "").trim();
     if (!da && !db) return (b.created_at || "").localeCompare(a.created_at || "");
     if (!da) return 1;
     if (!db) return -1;
@@ -57,6 +58,7 @@ export function TodoList({ pb, active }: { pb: PocketBase; active: boolean }) {
         </button>
       </header>
       {error ? <p className="error">{error}</p> : null}
+      {loading && items.length === 0 ? <p className="hint">Loading todos…</p> : null}
       <ul>
         {items.map((item) => (
           <li key={item.id} className="task-row">
@@ -64,13 +66,13 @@ export function TodoList({ pb, active }: { pb: PocketBase; active: boolean }) {
               <strong>{item.title || "(untitled)"}</strong>
               <time dateTime={item.deadline || undefined}>{formatDeadline(item.deadline)}</time>
             </div>
-            {item.notes?.trim() ? <p className="task-notes">{item.notes}</p> : null}
+            {(item.notes ?? "").trim() ? <p className="task-notes">{item.notes}</p> : null}
             {item.source_message ? (
               <p className="task-meta">From message {item.source_message}</p>
             ) : null}
           </li>
         ))}
-        {!loading && items.length === 0 ? (
+        {!loading && items.length === 0 && !error ? (
           <li className="empty">No todos yet — apply an analysis suggestion or add one later.</li>
         ) : null}
       </ul>

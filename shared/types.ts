@@ -78,6 +78,20 @@ export interface EventItem {
   starts_at: string;
   ends_at: string;
   status: ItemStatus;
+  calendar: string;
+  all_day: boolean;
+  timezone: string;
+  uid: string;
+}
+
+export interface CalendarItem {
+  id: string;
+  name: string;
+  color: string;
+  timezone: string;
+  source: string;
+  is_visible: boolean;
+  is_default: boolean;
 }
 
 export interface MailAccountInput {

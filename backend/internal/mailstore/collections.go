@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
@@ -110,6 +111,23 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.TextField{Name: "llm_model"})
 			c.Fields.Add(&core.TextField{Name: "llm_base_url"})
 			c.Fields.Add(&core.NumberField{Name: "sync_interval_minutes"})
+			c.Fields.Add(&core.TextField{Name: "display_timezone"})
+		}},
+		{"calendars", func(c *core.Collection) {
+			c.Fields.Add(&core.TextField{Name: "name", Required: true})
+			c.Fields.Add(&core.TextField{Name: "color"})
+			c.Fields.Add(&core.TextField{Name: "timezone"})
+			c.Fields.Add(&core.TextField{Name: "source"}) // local | ics | caldav
+			c.Fields.Add(&core.BoolField{Name: "is_visible"})
+			c.Fields.Add(&core.BoolField{Name: "is_default"})
+			c.Fields.Add(&core.TextField{Name: "ics_url"})
+			c.Fields.Add(&core.TextField{Name: "caldav_url"})
+			c.Fields.Add(&core.TextField{Name: "caldav_username"})
+			c.Fields.Add(&core.TextField{Name: "caldav_secret"})
+			c.Fields.Add(&core.TextField{Name: "caldav_calendar_path"})
+			c.Fields.Add(&core.TextField{Name: "sync_token"})
+			c.Fields.Add(&core.TextField{Name: "last_sync_at"})
+			c.Fields.Add(&core.TextField{Name: "last_error"})
 		}},
 		{"events", func(c *core.Collection) {
 			c.Fields.Add(&core.TextField{Name: "title"})
@@ -119,6 +137,13 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.TextField{Name: "starts_at"})
 			c.Fields.Add(&core.TextField{Name: "ends_at"})
 			c.Fields.Add(&core.TextField{Name: "status"}) // draft | approved
+			c.Fields.Add(&core.TextField{Name: "calendar"})
+			c.Fields.Add(&core.BoolField{Name: "all_day"})
+			c.Fields.Add(&core.TextField{Name: "timezone"})
+			c.Fields.Add(&core.TextField{Name: "uid"})
+			c.Fields.Add(&core.TextField{Name: "etag"})
+			c.Fields.Add(&core.TextField{Name: "rrule"})
+			c.Fields.Add(&core.TextField{Name: "exdate"})
 		}},
 		{"todos", func(c *core.Collection) {
 			c.Fields.Add(&core.TextField{Name: "title"})
@@ -295,6 +320,25 @@ func ensureLLMAnalysisSchemaFields(app core.App) error {
 		&core.TextField{Name: "llm_model"},
 		&core.TextField{Name: "llm_base_url"},
 		&core.NumberField{Name: "sync_interval_minutes"},
+		&core.TextField{Name: "display_timezone"},
+	}, nil); err != nil {
+		return err
+	}
+	if err := ensure("calendars", []core.Field{
+		&core.TextField{Name: "name", Required: true},
+		&core.TextField{Name: "color"},
+		&core.TextField{Name: "timezone"},
+		&core.TextField{Name: "source"},
+		&core.BoolField{Name: "is_visible"},
+		&core.BoolField{Name: "is_default"},
+		&core.TextField{Name: "ics_url"},
+		&core.TextField{Name: "caldav_url"},
+		&core.TextField{Name: "caldav_username"},
+		&core.TextField{Name: "caldav_secret"},
+		&core.TextField{Name: "caldav_calendar_path"},
+		&core.TextField{Name: "sync_token"},
+		&core.TextField{Name: "last_sync_at"},
+		&core.TextField{Name: "last_error"},
 	}, nil); err != nil {
 		return err
 	}
@@ -306,6 +350,13 @@ func ensureLLMAnalysisSchemaFields(app core.App) error {
 		&core.TextField{Name: "starts_at"},
 		&core.TextField{Name: "ends_at"},
 		&core.TextField{Name: "status"},
+		&core.TextField{Name: "calendar"},
+		&core.BoolField{Name: "all_day"},
+		&core.TextField{Name: "timezone"},
+		&core.TextField{Name: "uid"},
+		&core.TextField{Name: "etag"},
+		&core.TextField{Name: "rrule"},
+		&core.TextField{Name: "exdate"},
 	}, map[string]int{"notes": 20_000}); err != nil {
 		return err
 	}
@@ -319,7 +370,10 @@ func ensureLLMAnalysisSchemaFields(app core.App) error {
 	}, map[string]int{"notes": 20_000}); err != nil {
 		return err
 	}
-	return backfillDraftStatusApproved(app)
+	if err := backfillDraftStatusApproved(app); err != nil {
+		return err
+	}
+	return ensureDefaultCalendarAndMigrateEvents(app)
 }
 
 func ensureMessagesListIndex(app core.App) error {
@@ -365,6 +419,119 @@ func ensureMessageAnalysisUniqueIndex(app core.App) error {
 	}
 	col.AddIndex(messageAnalysisMessageUniqueIndex, true, "`message`", "")
 	return app.Save(col)
+}
+
+const (
+	DefaultCalendarName     = "Personal"
+	DefaultCalendarColor    = "#0f6e56" // pine
+	DefaultCalendarTimezone = "America/New_York"
+	CalendarSourceLocal     = "local"
+)
+
+// FindDefaultCalendar returns the default calendar, preferring is_default,
+// then any local calendar, then the first calendar row.
+func FindDefaultCalendar(app core.App) (*core.Record, error) {
+	col, err := app.FindCollectionByNameOrId("calendars")
+	if err != nil {
+		return nil, err
+	}
+	if rec, err := app.FindFirstRecordByFilter(col.Id, "is_default = true", nil); err == nil {
+		return rec, nil
+	}
+	if rec, err := app.FindFirstRecordByFilter(col.Id, "source = {:s}", dbx.Params{"s": CalendarSourceLocal}); err == nil {
+		return rec, nil
+	}
+	return app.FindFirstRecordByFilter(col.Id, "id != ''", nil)
+}
+
+// ensureDefaultCalendarAndMigrateEvents creates Personal if no calendars exist,
+// then backfills events.calendar / all_day / timezone / uid.
+func ensureDefaultCalendarAndMigrateEvents(app core.App) error {
+	calCol, err := app.FindCollectionByNameOrId("calendars")
+	if err != nil {
+		return err
+	}
+	cals, err := app.FindRecordsByFilter(calCol.Id, "id != ''", "", 0, 0, nil)
+	if err != nil {
+		return err
+	}
+	if len(cals) == 0 {
+		rec := core.NewRecord(calCol)
+		rec.Set("name", DefaultCalendarName)
+		rec.Set("color", DefaultCalendarColor)
+		rec.Set("timezone", DefaultCalendarTimezone)
+		rec.Set("source", CalendarSourceLocal)
+		rec.Set("is_visible", true)
+		rec.Set("is_default", true)
+		if err := app.Save(rec); err != nil {
+			return fmt.Errorf("create default calendar: %w", err)
+		}
+		cals = []*core.Record{rec}
+	}
+
+	def := cals[0]
+	for _, c := range cals {
+		if c.GetBool("is_default") {
+			def = c
+			break
+		}
+	}
+	if !def.GetBool("is_default") {
+		def.Set("is_default", true)
+		if err := app.Save(def); err != nil {
+			return err
+		}
+	}
+
+	// New bool field defaults to false in SQLite; if every calendar is hidden,
+	// treat as schema backfill and show them all once.
+	allHidden := true
+	for _, c := range cals {
+		if c.GetBool("is_visible") {
+			allHidden = false
+			break
+		}
+	}
+	if allHidden {
+		for _, c := range cals {
+			c.Set("is_visible", true)
+			if err := app.Save(c); err != nil {
+				return err
+			}
+		}
+	}
+
+	evCol, err := app.FindCollectionByNameOrId("events")
+	if err != nil {
+		return err
+	}
+	events, err := app.FindRecordsByFilter(evCol.Id, "id != ''", "", 0, 0, nil)
+	if err != nil {
+		return err
+	}
+	for _, ev := range events {
+		changed := false
+		if strings.TrimSpace(ev.GetString("calendar")) == "" {
+			ev.Set("calendar", def.Id)
+			changed = true
+		}
+		if strings.TrimSpace(ev.GetString("timezone")) == "" {
+			ev.Set("timezone", "UTC")
+			changed = true
+		}
+		if strings.TrimSpace(ev.GetString("uid")) == "" {
+			ev.Set("uid", uuid.NewString())
+			changed = true
+		}
+		// Legacy rows predate all_day; persist explicit false on first migrate.
+		if changed {
+			ev.Set("all_day", ev.GetBool("all_day"))
+			if err := app.Save(ev); err != nil {
+				return fmt.Errorf("migrate event %s: %w", ev.Id, err)
+			}
+		}
+	}
+	return nil
 }
 
 func UpsertAccount(app core.App, m map[string]any) error {

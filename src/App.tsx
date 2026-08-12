@@ -21,12 +21,12 @@ import { SyncBadge } from "./components/SyncBadge";
 import { ComposeModal } from "./components/ComposeModal";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { TodoList } from "./components/TodoList";
-import { EventList } from "./components/EventList";
+import { CalendarView } from "./components/CalendarView";
 
 const ANALYSIS_POLL_MS = 15_000;
 const ANALYZER_STATUS_POLL_MS = 2_000;
 
-type AppTab = "mail" | "todos" | "events";
+type AppTab = "mail" | "todos" | "calendar";
 
 interface Folder {
   id: string;
@@ -400,10 +400,10 @@ export function App() {
           </button>
           <button
             type="button"
-            className={activeTab === "events" ? "tab active" : "tab"}
-            onClick={() => setActiveTab("events")}
+            className={activeTab === "calendar" ? "tab active" : "tab"}
+            onClick={() => setActiveTab("calendar")}
           >
-            Events
+            Calendar
           </button>
         </nav>
         {activeTab === "mail" ? (
@@ -477,7 +477,7 @@ export function App() {
       ) : null}
 
       {activeTab === "todos" ? <TodoList pb={pb} active={activeTab === "todos"} /> : null}
-      {activeTab === "events" ? <EventList pb={pb} active={activeTab === "events"} /> : null}
+      {activeTab === "calendar" ? <CalendarView pb={pb} active={activeTab === "calendar"} /> : null}
 
       {composeOpen && (
         <ComposeModal

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"email.local/backend/internal/calendar"
+
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -28,10 +30,10 @@ func upsertDraftFromAnalysis(app core.App, messageID string, result Result) erro
 			"deadline": "",
 		})
 	case ActionAddEvent:
-		return upsertDraftItem(app, "events", messageID, result.ActionTarget, map[string]any{
+		return upsertDraftItem(app, "events", messageID, result.ActionTarget, calendar.EnsureEventDefaults(app, map[string]any{
 			"starts_at": "",
 			"ends_at":   "",
-		})
+		}))
 	default:
 		return nil
 	}

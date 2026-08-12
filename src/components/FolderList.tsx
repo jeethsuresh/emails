@@ -1,0 +1,52 @@
+import type { AnalyzerStatus, SyncStatus } from "../../shared/types";
+import { SidebarProgress } from "./SidebarProgress";
+
+interface Folder {
+  id: string;
+  name: string;
+  role: string;
+}
+
+export function FolderList({
+  folders,
+  selected,
+  onSelect,
+  syncStatus,
+  analyzerStatus,
+  downloadingBody,
+}: {
+  folders: Folder[];
+  selected: string | null;
+  onSelect: (id: string) => void;
+  syncStatus: SyncStatus | null;
+  analyzerStatus: AnalyzerStatus | null;
+  downloadingBody: boolean;
+}) {
+  return (
+    <aside className="folders">
+      <div className="folders-body">
+        <h2>Folders</h2>
+        <ul>
+          {folders.map((f) => (
+            <li key={f.id}>
+              <button
+                type="button"
+                className={selected === f.id ? "active" : ""}
+                onClick={() => onSelect(f.id)}
+              >
+                <span>{f.name}</span>
+                <em>{f.role}</em>
+              </button>
+            </li>
+          ))}
+          {folders.length === 0 && <li className="empty">No folders yet — hit Sync</li>}
+        </ul>
+      </div>
+      <SidebarProgress
+        syncStatus={syncStatus}
+        analyzerStatus={analyzerStatus}
+        downloadingBody={downloadingBody}
+      />
+    </aside>
+  );
+}

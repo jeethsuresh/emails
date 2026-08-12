@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-electron/
+backend/pb_data/
+*.wasm
+!native/email_core.wasm
+.DS_Store
+*.log
+release/
+backend/vendor/

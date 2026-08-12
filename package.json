@@ -1,0 +1,33 @@
+{
+  "name": "email",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Offline-first desktop mail client — Electron + PocketBase WASM + C core",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "npm run build:native && npm run build:backend && vite",
+    "build": "npm run build:native && npm run build:backend && npm run build:wasm && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit && vite build",
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "build:backend": "node scripts/build-backend.mjs",
+    "build:native": "node scripts/build-c.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "pocketbase": "^0.26.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "electron": "^37.2.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0",
+    "vite-plugin-electron": "^0.29.0",
+    "vite-plugin-electron-renderer": "^0.14.6"
+  }
+}

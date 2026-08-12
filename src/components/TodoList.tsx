@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type PocketBase from "pocketbase";
 import type { ItemStatus, TodoItem } from "../../shared/types";
+import { CreateTodoModal } from "./CreateTodoModal";
 
 function formatDeadline(value: string | null | undefined): string {
   const raw = (value ?? "").trim();
@@ -32,6 +33,7 @@ export function TodoList({ pb, active }: { pb: PocketBase; active: boolean }) {
   const [items, setItems] = useState<TodoItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -70,9 +72,14 @@ export function TodoList({ pb, active }: { pb: PocketBase; active: boolean }) {
           Todos
           {items.length > 0 ? <span className="count">{items.length}</span> : null}
         </h2>
-        <button type="button" onClick={() => void refresh()} disabled={loading}>
-          {loading ? "Refreshing…" : "Refresh"}
-        </button>
+        <div className="task-list-actions">
+          <button type="button" onClick={() => setCreateOpen(true)}>
+            New todo
+          </button>
+          <button type="button" onClick={() => void refresh()} disabled={loading}>
+            {loading ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
       </header>
       {error ? <p className="error">{error}</p> : null}
       {loading && items.length === 0 ? <p className="hint">Loading todos…</p> : null}
@@ -106,9 +113,16 @@ export function TodoList({ pb, active }: { pb: PocketBase; active: boolean }) {
           );
         })}
         {!loading && items.length === 0 && !error ? (
-          <li className="empty">No todos yet — analysis drafts and Apply land here.</li>
+          <li className="empty">No todos yet — create one or approve an analysis draft.</li>
         ) : null}
       </ul>
+      {createOpen ? (
+        <CreateTodoModal
+          pb={pb}
+          onClose={() => setCreateOpen(false)}
+          onSaved={() => void refresh()}
+        />
+      ) : null}
     </section>
   );
 }

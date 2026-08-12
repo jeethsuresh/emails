@@ -13,6 +13,7 @@ import { TodoList } from "./components/TodoList";
 import { EventList } from "./components/EventList";
 
 const ANALYSIS_POLL_MS = 15_000;
+const MESSAGE_PAGE_SIZE = 100;
 
 type AppTab = "mail" | "todos" | "events";
 
@@ -68,12 +69,14 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [analysisByMessage, setAnalysisByMessage] = useState<Record<string, MessageAnalysis>>({});
   const [activeTab, setActiveTab] = useState<AppTab>("mail");
 
   const selectedFolderRef = useRef<string | null>(null);
   const queryRef = useRef("");
   const messagesRef = useRef<Message[]>([]);
+  const loadSeqRef = useRef(0);
   selectedFolderRef.current = selectedFolder;
   queryRef.current = query;
   messagesRef.current = messages;
@@ -87,33 +90,35 @@ export function App() {
   }, []);
 
   const loadMessages = useCallback(
-    async (folderId: string | null, search: string, _page = 1, _append = false) => {
+    async (folderId: string | null, search: string, page = 1, append = false) => {
       const q = search.trim();
       if (!folderId && !q) {
         setMessages([]);
         setMessageTotal(0);
+        setHasMoreMessages(false);
         return;
       }
+      const seq = ++loadSeqRef.current;
       setLoadingMessages(true);
       try {
         const filter = buildFilter(folderId, q);
-        // Full folder metadata (no bodies). Pagination was racing with sync polls and
-        // auto-cancelled requests were wiping the list — so load everything light.
-        const items = await pb.collection("messages").getFullList<Message>({
+        // Page newest-first metadata only. Loading 4k+ rows + analysis filters OOMs Electron.
+        const result = await pb.collection("messages").getList<Message>(page, MESSAGE_PAGE_SIZE, {
           filter,
           sort: "-date,-uid",
           fields: LIST_FIELDS,
-          batch: 200,
         });
         if (
+          seq !== loadSeqRef.current ||
           selectedFolderRef.current !== folderId ||
           queryRef.current.trim() !== q
         ) {
           return;
         }
-        const sorted = sortMessagesNewestFirst(items);
-        setMessageTotal(sorted.length);
-        setMessages(sorted);
+        const pageItems = sortMessagesNewestFirst(result.items);
+        setMessageTotal(result.totalItems);
+        setHasMoreMessages(result.page < result.totalPages);
+        setMessages((prev) => (append ? sortMessagesNewestFirst([...prev, ...pageItems]) : pageItems));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         // Never clear an existing list on transient/cancel errors.
@@ -123,10 +128,7 @@ export function App() {
         }
         console.error("loadMessages failed", err);
       } finally {
-        if (
-          selectedFolderRef.current === folderId &&
-          queryRef.current.trim() === q
-        ) {
+        if (seq === loadSeqRef.current) {
           setLoadingMessages(false);
         }
       }
@@ -158,6 +160,7 @@ export function App() {
       if (accounts.totalItems === 0) {
         setFolders([]);
         setMessages([]);
+        setHasMoreMessages(false);
         return;
       }
 
@@ -178,10 +181,15 @@ export function App() {
         selectedFolderRef.current = folderId;
         setSelectedFolder(folderId);
       }
-      await loadMessages(folderId, queryRef.current);
+      await loadMessages(folderId, queryRef.current, 1, false);
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/autocancel|abort/i.test(msg)) {
+        console.warn("refreshFolders skipped", msg);
+        return;
+      }
       console.error("refreshFolders failed", err);
-      setHasAccount(false);
+      // Keep existing account UI on transient PB errors — flipping to setup feels like a crash.
     } finally {
       setReady(true);
     }
@@ -249,7 +257,7 @@ export function App() {
   // Debounce search so we don't hammer PocketBase on every keystroke.
   useEffect(() => {
     const handle = window.setTimeout(() => {
-      void loadMessages(selectedFolder, query);
+      void loadMessages(selectedFolder, query, 1, false);
     }, query.trim() ? 250 : 0);
     return () => window.clearTimeout(handle);
   }, [selectedFolder, query, loadMessages]);
@@ -277,6 +285,7 @@ export function App() {
     queryRef.current = "";
     setMessages([]);
     setMessageTotal(0);
+    setHasMoreMessages(false);
   };
 
   const selectMessage = async (m: Message) => {
@@ -310,7 +319,9 @@ export function App() {
   };
 
   const loadMoreMessages = () => {
-    // Full list is loaded up front; keep handler for MessageList API compat.
+    if (loadingMessages || !hasMoreMessages) return;
+    const nextPage = Math.floor(messages.length / MESSAGE_PAGE_SIZE) + 1;
+    void loadMessages(selectedFolderRef.current, queryRef.current, nextPage, true);
   };
 
   if (!hasAccount) {
@@ -386,7 +397,7 @@ export function App() {
             selectedId={selectedMessage?.id ?? null}
             totalCount={messageTotal}
             loading={loadingMessages}
-            hasMore={false}
+            hasMore={hasMoreMessages}
             emptyLabel={
               loadingMessages && messages.length === 0
                 ? "Loading…"

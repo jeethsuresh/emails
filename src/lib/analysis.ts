@@ -32,17 +32,32 @@ export function buildMessageAnalysisFilter(ids: string[]): string {
   return ids.map((id) => `message = "${escapeFilterValue(id)}"`).join(" || ");
 }
 
+const ANALYSIS_LIST_FIELDS =
+  "id,message,status,priority,suggested_action,action_target,model,analyzed_at,fail_count,error";
+
+/** Keep OR-filters small — thousands of ids in one filter OOMs the renderer/PB. */
+const ANALYSIS_ID_CHUNK = 75;
+
 export async function loadAnalysesForMessages(
   pb: PocketBase,
   ids: string[],
 ): Promise<Record<string, MessageAnalysis>> {
   if (ids.length === 0) return {};
-  const rows = await pb.collection("message_analysis").getFullList<MessageAnalysis>({
-    filter: buildMessageAnalysisFilter(ids),
-    batch: 200,
-  });
   const map: Record<string, MessageAnalysis> = {};
-  for (const row of rows) map[row.message] = row;
+  for (let i = 0; i < ids.length; i += ANALYSIS_ID_CHUNK) {
+    const chunk = ids.slice(i, i + ANALYSIS_ID_CHUNK);
+    const rows = await pb.collection("message_analysis").getFullList<MessageAnalysis>({
+      filter: buildMessageAnalysisFilter(chunk),
+      fields: ANALYSIS_LIST_FIELDS,
+      batch: 100,
+    });
+    for (const row of rows) {
+      map[row.message] = {
+        ...row,
+        suggested_reply: row.suggested_reply ?? "",
+      };
+    }
+  }
   return map;
 }
 

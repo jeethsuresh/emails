@@ -43,7 +43,7 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.TextField{Name: "role"})
 			c.Fields.Add(&core.NumberField{Name: "uidvalidity"})
 			c.Fields.Add(&core.NumberField{Name: "uidnext"})
-			c.Fields.Add(&core.NumberField{Name: "sync_uid_max"})     // highest UID indexed
+			c.Fields.Add(&core.NumberField{Name: "sync_uid_max"})      // highest UID indexed
 			c.Fields.Add(&core.NumberField{Name: "sync_backfill_uid"}) // next older UID boundary (exclusive high)
 			c.Fields.Add(&core.BoolField{Name: "sync_complete"})
 		}},
@@ -109,6 +109,7 @@ func ensureCollections(app core.App) error {
 		{"app_settings", func(c *core.Collection) {
 			c.Fields.Add(&core.TextField{Name: "llm_model"})
 			c.Fields.Add(&core.TextField{Name: "llm_base_url"})
+			c.Fields.Add(&core.NumberField{Name: "sync_interval_minutes"})
 		}},
 		{"events", func(c *core.Collection) {
 			c.Fields.Add(&core.TextField{Name: "title"})
@@ -117,6 +118,7 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.TextField{Name: "created_at"})
 			c.Fields.Add(&core.TextField{Name: "starts_at"})
 			c.Fields.Add(&core.TextField{Name: "ends_at"})
+			c.Fields.Add(&core.TextField{Name: "status"}) // draft | approved
 		}},
 		{"todos", func(c *core.Collection) {
 			c.Fields.Add(&core.TextField{Name: "title"})
@@ -124,6 +126,7 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.TextField{Name: "source_message"})
 			c.Fields.Add(&core.TextField{Name: "created_at"})
 			c.Fields.Add(&core.TextField{Name: "deadline"})
+			c.Fields.Add(&core.TextField{Name: "status"}) // draft | approved
 		}},
 	}
 
@@ -291,6 +294,7 @@ func ensureLLMAnalysisSchemaFields(app core.App) error {
 	if err := ensure("app_settings", []core.Field{
 		&core.TextField{Name: "llm_model"},
 		&core.TextField{Name: "llm_base_url"},
+		&core.NumberField{Name: "sync_interval_minutes"},
 	}, nil); err != nil {
 		return err
 	}
@@ -301,16 +305,51 @@ func ensureLLMAnalysisSchemaFields(app core.App) error {
 		&core.TextField{Name: "created_at"},
 		&core.TextField{Name: "starts_at"},
 		&core.TextField{Name: "ends_at"},
+		&core.TextField{Name: "status"},
 	}, map[string]int{"notes": 20_000}); err != nil {
 		return err
 	}
-	return ensure("todos", []core.Field{
+	if err := ensure("todos", []core.Field{
 		&core.TextField{Name: "title"},
 		&core.TextField{Name: "notes", Max: 20_000},
 		&core.TextField{Name: "source_message"},
 		&core.TextField{Name: "created_at"},
 		&core.TextField{Name: "deadline"},
-	}, map[string]int{"notes": 20_000})
+		&core.TextField{Name: "status"},
+	}, map[string]int{"notes": 20_000}); err != nil {
+		return err
+	}
+	return backfillDraftStatusApproved(app)
+}
+
+func ensureMessagesListIndex(app core.App) error {
+	col, err := app.FindCollectionByNameOrId("messages")
+	if err != nil {
+		return err
+	}
+	const name = "idx_messages_folder_date_uid"
+	if col.GetIndex(name) != "" {
+		return nil
+	}
+	col.AddIndex(name, false, "`folder`,`date`,`uid`", "")
+	return app.Save(col)
+}
+
+// backfillDraftStatusApproved sets status='approved' on existing todos/events
+// that predate the draft/approved distinction (empty or null status).
+func backfillDraftStatusApproved(app core.App) error {
+	if err := ensureMessagesListIndex(app); err != nil {
+		return err
+	}
+	for _, table := range []string{"todos", "events"} {
+		if _, err := app.DB().NewQuery(fmt.Sprintf(
+			`UPDATE %s SET status = 'approved' WHERE status IS NULL OR status = ''`,
+			table,
+		)).Execute(); err != nil {
+			return fmt.Errorf("backfill %s.status: %w", table, err)
+		}
+	}
+	return nil
 }
 
 // ensureMessageAnalysisUniqueIndex adds the unique index on message_analysis.message

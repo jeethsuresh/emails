@@ -2,6 +2,7 @@ import type PocketBase from "pocketbase";
 import type {
   AnalysisPriority,
   AnalyzerSettings,
+  AnalyzerStatus,
   MessageAnalysis,
 } from "../../shared/types";
 
@@ -61,6 +62,10 @@ export async function loadAnalysesForMessages(
   return map;
 }
 
+export async function getAnalyzerStatus(pb: PocketBase): Promise<AnalyzerStatus> {
+  return pb.send<AnalyzerStatus>("/api/email/analyzer/status", { method: "GET" });
+}
+
 export async function getAnalyzerSettings(pb: PocketBase): Promise<AnalyzerSettings> {
   return pb.send<AnalyzerSettings>("/api/email/analyzer/settings", { method: "GET" });
 }
@@ -72,14 +77,47 @@ export async function saveAnalyzerSettings(
   return pb.send<AnalyzerSettings>("/api/email/analyzer/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: { model: settings.model, baseUrl: settings.baseUrl },
+    body: {
+      model: settings.model,
+      baseUrl: settings.baseUrl,
+      syncIntervalMinutes: settings.syncIntervalMinutes,
+    },
+  });
+}
+
+async function approveOrCreateItem(
+  pb: PocketBase,
+  collection: "todos" | "events",
+  sourceMessage: string,
+  title: string,
+  extras: Record<string, string>,
+): Promise<void> {
+  const existing = await pb.collection(collection).getFullList<{ id: string; status?: string }>({
+    filter: `source_message = "${escapeFilterValue(sourceMessage)}"`,
+    fields: "id,status",
+    batch: 50,
+  });
+  const draft = existing.find((row) => (row.status ?? "") === "draft" || (row.status ?? "") === "");
+  if (draft) {
+    await pb.collection(collection).update(draft.id, { status: "approved", title });
+    return;
+  }
+  if (existing.some((row) => row.status === "approved")) {
+    return;
+  }
+  await pb.collection(collection).create({
+    title,
+    notes: "",
+    source_message: sourceMessage,
+    created_at: new Date().toISOString(),
+    status: "approved",
+    ...extras,
   });
 }
 
 /**
  * Carries out an analysis's suggested_action. Moves are delegated to the syncer's
- * move endpoint; add_event/add_todo create scaffold PocketBase records the user
- * can flesh out later.
+ * move endpoint; add_event/add_todo approve an existing draft or create approved.
  */
 export async function applyAnalysisAction(
   pb: PocketBase,
@@ -103,21 +141,13 @@ export async function applyAnalysisAction(
       });
       return;
     case "add_event":
-      await pb.collection("events").create({
-        title,
-        notes: "",
-        source_message: analysis.message,
-        created_at: new Date().toISOString(),
+      await approveOrCreateItem(pb, "events", analysis.message, title, {
         starts_at: "",
         ends_at: "",
       });
       return;
     case "add_todo":
-      await pb.collection("todos").create({
-        title,
-        notes: "",
-        source_message: analysis.message,
-        created_at: new Date().toISOString(),
+      await approveOrCreateItem(pb, "todos", analysis.message, title, {
         deadline: "",
       });
       return;

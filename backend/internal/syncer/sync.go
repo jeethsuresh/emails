@@ -21,19 +21,19 @@ import (
 )
 
 const (
-	recentBatchSize   = 40  // newest-first catch-up window per folder
-	backfillBatchSize = 25  // older mail paced in background
-	bodyFillBatchSize = 12  // max body-less messages to repair per folder pass
-	backfillPause     = 350 * time.Millisecond
-	interval          = 60 * time.Second
+	recentBatchSize    = 40 // newest-first catch-up window per folder
+	backfillBatchSize  = 25 // older mail paced in background
+	bodyFillBatchSize  = 12 // max body-less messages to repair per folder pass
+	backfillPause      = 350 * time.Millisecond
+	intervalCheckEvery = 5 * time.Second // how often to re-read sync_interval_minutes
 )
 
 var (
-	mu             sync.Mutex
-	catchupRunning bool
+	mu              sync.Mutex
+	catchupRunning  bool
 	backfillRunning bool
-	syncCancel     context.CancelFunc // cancels in-flight catch-up
-	backfillCancel context.CancelFunc
+	syncCancel      context.CancelFunc // cancels in-flight catch-up
+	backfillCancel  context.CancelFunc
 )
 
 func Register(app core.App) {
@@ -143,11 +143,33 @@ func upsertFromAPI(app core.App, m map[string]any) error {
 }
 
 func loop(app core.App) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for range t.C {
-		Trigger(app)
+	interval := syncInterval(app)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	check := time.NewTicker(intervalCheckEvery)
+	defer check.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			Trigger(app)
+		case <-check.C:
+			next := syncInterval(app)
+			if next != interval {
+				ticker.Reset(next)
+				interval = next
+				logProgress("sync interval updated to %s", next)
+			}
+		}
 	}
+}
+
+func syncInterval(app core.App) time.Duration {
+	s, err := analyzer.LoadSettings(app)
+	if err != nil {
+		return time.Duration(analyzer.DefaultSyncIntervalMinutes) * time.Minute
+	}
+	mins := analyzer.ClampSyncIntervalMinutes(s.SyncIntervalMinutes)
+	return time.Duration(mins) * time.Minute
 }
 
 // WipeMail stops any in-flight sync, deletes all cached messages, and resets folder sync cursors.

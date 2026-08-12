@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MessageAnalysis, SyncStatus } from "../shared/types";
+import type { AnalyzerStatus, MessageAnalysis, SyncStatus } from "../shared/types";
 import { createPbClient } from "./lib/pb";
-import { applyAnalysisAction, loadAnalysesForMessages } from "./lib/analysis";
+import {
+  applyAnalysisAction,
+  getAnalyzerStatus,
+  loadAnalysesForMessages,
+} from "./lib/analysis";
+import {
+  evictPagesOutside,
+  fetchMessagePage,
+  mergePageIntoSlots,
+  pagesForRange,
+  type ListMessage,
+} from "./lib/messageCache";
 import { AccountSetup } from "./components/AccountSetup";
 import { FolderList } from "./components/FolderList";
 import { MessageList } from "./components/MessageList";
@@ -13,7 +24,7 @@ import { TodoList } from "./components/TodoList";
 import { EventList } from "./components/EventList";
 
 const ANALYSIS_POLL_MS = 15_000;
-const MESSAGE_PAGE_SIZE = 100;
+const ANALYZER_STATUS_POLL_MS = 2_000;
 
 type AppTab = "mail" | "todos" | "events";
 
@@ -23,42 +34,17 @@ interface Folder {
   role: string;
 }
 
-const LIST_FIELDS =
-  "id,uid,subject,from_addr,to_addrs,date,snippet,seen,flagged,folder";
-
-interface Message {
-  id: string;
-  uid?: number;
-  subject: string;
-  from_addr: string;
-  date: string;
-  snippet: string;
-  body_text: string;
-  body_html?: string;
-  seen: boolean;
-  flagged: boolean;
-  folder: string;
-}
+type Message = ListMessage;
 
 function escapeFilterValue(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
-}
-
-/** Newest first: RFC3339 date descending, then IMAP uid descending. */
-function sortMessagesNewestFirst(items: Message[]): Message[] {
-  return [...items].sort((a, b) => {
-    const da = a.date || "";
-    const db = b.date || "";
-    if (da !== db) return db.localeCompare(da);
-    return (b.uid ?? 0) - (a.uid ?? 0);
-  });
 }
 
 export function App() {
   const pb = useMemo(() => createPbClient(), []);
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [slots, setSlots] = useState<Array<Message | null>>([]);
   const [messageTotal, setMessageTotal] = useState(0);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
@@ -69,17 +55,27 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
-  const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [analysisByMessage, setAnalysisByMessage] = useState<Record<string, MessageAnalysis>>({});
+  const [analyzerStatus, setAnalyzerStatus] = useState<AnalyzerStatus | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>("mail");
+  const [visibleMessageIds, setVisibleMessageIds] = useState<string[]>([]);
 
   const selectedFolderRef = useRef<string | null>(null);
   const queryRef = useRef("");
-  const messagesRef = useRef<Message[]>([]);
+  const slotsRef = useRef<Array<Message | null>>([]);
+  const visibleIdsRef = useRef<string[]>([]);
   const loadSeqRef = useRef(0);
-  selectedFolderRef.current = selectedFolder;
-  queryRef.current = query;
-  messagesRef.current = messages;
+  const loadedPagesRef = useRef<Set<number>>(new Set());
+  const inflightPagesRef = useRef<Set<number>>(new Set());
+  slotsRef.current = slots;
+  visibleIdsRef.current = visibleMessageIds;
+
+  useEffect(() => {
+    selectedFolderRef.current = selectedFolder;
+  }, [selectedFolder]);
+  useEffect(() => {
+    queryRef.current = query;
+  }, [query]);
 
   const buildFilter = useCallback((folderId: string | null, search: string) => {
     const safe = escapeFilterValue(search.trim());
@@ -89,58 +85,86 @@ export function App() {
     return `folder = "${folderId}"`;
   }, []);
 
-  const loadMessages = useCallback(
-    async (folderId: string | null, search: string, page = 1, append = false) => {
+  const resetMessageList = useCallback(() => {
+    loadSeqRef.current += 1;
+    loadedPagesRef.current = new Set();
+    inflightPagesRef.current = new Set();
+    setSlots([]);
+    setMessageTotal(0);
+    setVisibleMessageIds([]);
+    setAnalysisByMessage({});
+  }, []);
+
+  const ensurePages = useCallback(
+    async (folderId: string | null, search: string, start: number, end: number) => {
       const q = search.trim();
       if (!folderId && !q) {
-        setMessages([]);
-        setMessageTotal(0);
-        setHasMoreMessages(false);
+        resetMessageList();
         return;
       }
-      const seq = ++loadSeqRef.current;
+      const seq = loadSeqRef.current;
+      const filter = buildFilter(folderId, q);
+      const wanted = pagesForRange(start, end);
+      const keep = new Set(wanted);
       setLoadingMessages(true);
       try {
-        const filter = buildFilter(folderId, q);
-        // Page newest-first metadata only. Loading 4k+ rows + analysis filters OOMs Electron.
-        const result = await pb.collection("messages").getList<Message>(page, MESSAGE_PAGE_SIZE, {
-          filter,
-          sort: "-date,-uid",
-          fields: LIST_FIELDS,
-        });
-        if (
-          seq !== loadSeqRef.current ||
-          selectedFolderRef.current !== folderId ||
-          queryRef.current.trim() !== q
-        ) {
-          return;
+        for (const page of wanted) {
+          if (loadedPagesRef.current.has(page) || inflightPagesRef.current.has(page)) continue;
+          inflightPagesRef.current.add(page);
+          try {
+            const { items, totalItems } = await fetchMessagePage(pb, filter, page);
+            if (
+              seq !== loadSeqRef.current ||
+              selectedFolderRef.current !== folderId ||
+              queryRef.current.trim() !== q
+            ) {
+              return;
+            }
+            loadedPagesRef.current.add(page);
+            setMessageTotal(totalItems);
+            setSlots((prev) => {
+              const merged = mergePageIntoSlots(prev, totalItems, page, items);
+              return evictPagesOutside(merged, keep);
+            });
+            // Drop loaded-page tracking for evicted pages.
+            for (const p of [...loadedPagesRef.current]) {
+              if (!keep.has(p)) loadedPagesRef.current.delete(p);
+            }
+          } finally {
+            inflightPagesRef.current.delete(page);
+          }
         }
-        const pageItems = sortMessagesNewestFirst(result.items);
-        setMessageTotal(result.totalItems);
-        setHasMoreMessages(result.page < result.totalPages);
-        setMessages((prev) => (append ? sortMessagesNewestFirst([...prev, ...pageItems]) : pageItems));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        // Never clear an existing list on transient/cancel errors.
         if (/autocancel|abort/i.test(msg)) {
-          console.warn("loadMessages skipped", msg);
+          console.warn("ensurePages skipped", msg);
           return;
         }
-        console.error("loadMessages failed", err);
+        console.error("ensurePages failed", err);
       } finally {
         if (seq === loadSeqRef.current) {
           setLoadingMessages(false);
         }
       }
     },
-    [pb, buildFilter],
+    [pb, buildFilter, resetMessageList],
+  );
+
+  const reloadList = useCallback(
+    async (folderId: string | null, search: string) => {
+      resetMessageList();
+      // Reserve seq after resetMessageList bumped it.
+      await ensurePages(folderId, search, 0, 74);
+    },
+    [resetMessageList, ensurePages],
   );
 
   const refreshAnalyses = useCallback(
     async (ids: string[]) => {
+      if (ids.length === 0) return;
       try {
         const map = await loadAnalysesForMessages(pb, ids);
-        setAnalysisByMessage(map);
+        setAnalysisByMessage((prev) => ({ ...prev, ...map }));
       } catch (err) {
         console.error("refreshAnalyses failed", err);
       }
@@ -159,15 +183,13 @@ export function App() {
       setHasAccount(accounts.totalItems > 0);
       if (accounts.totalItems === 0) {
         setFolders([]);
-        setMessages([]);
-        setHasMoreMessages(false);
+        resetMessageList();
         return;
       }
 
       const folderRows = await pb.collection("folders").getFullList<Folder>({
         sort: "role,name",
       });
-      // Prefer inbox first in the sidebar.
       folderRows.sort((a, b) => {
         const rank = (r: string) =>
           r === "inbox" ? 0 : r === "sent" ? 1 : r === "drafts" ? 2 : r === "trash" ? 3 : 9;
@@ -181,7 +203,7 @@ export function App() {
         selectedFolderRef.current = folderId;
         setSelectedFolder(folderId);
       }
-      await loadMessages(folderId, queryRef.current, 1, false);
+      await reloadList(folderId, queryRef.current);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/autocancel|abort/i.test(msg)) {
@@ -189,23 +211,25 @@ export function App() {
         return;
       }
       console.error("refreshFolders failed", err);
-      // Keep existing account UI on transient PB errors — flipping to setup feels like a crash.
     } finally {
       setReady(true);
     }
-  }, [pb, loadMessages]);
+  }, [pb, reloadList, resetMessageList]);
 
   const applyAnalysis = useCallback(
     async (analysis: MessageAnalysis) => {
-      const subject = messagesRef.current.find((m) => m.id === analysis.message)?.subject ?? "";
+      const subject =
+        slotsRef.current.find((m) => m?.id === analysis.message)?.subject ??
+        selectedMessage?.subject ??
+        "";
       await applyAnalysisAction(pb, analysis, subject);
       if (analysis.suggested_action === "move_to_folder" || analysis.suggested_action === "move_to_spam") {
         await refreshFolders();
       } else {
-        await refreshAnalyses(messagesRef.current.map((m) => m.id));
+        await refreshAnalyses(visibleIdsRef.current);
       }
     },
-    [pb, refreshFolders, refreshAnalyses],
+    [pb, refreshFolders, refreshAnalyses, selectedMessage?.subject],
   );
 
   useEffect(() => {
@@ -220,8 +244,9 @@ export function App() {
         const recentDone =
           prev?.phase === "recent" &&
           (next.phase === "backfill" || (next.state === "idle" && next.phase === "idle"));
-        // Full list is expensive (~4k rows) — only reload when a sync phase settles.
-        if (recentDone || (next.state === "idle" && next.phase === "idle")) {
+        const becameIdle =
+          prev?.state === "syncing" && next.state === "idle" && next.phase === "idle";
+        if (recentDone || becameIdle) {
           void refreshFolders();
         }
         return next;
@@ -235,10 +260,9 @@ export function App() {
     return () => clearInterval(t);
   }, [refreshFolders]);
 
-  // Keep the open reader metadata in sync; do not clobber loaded bodies from list rows.
   useEffect(() => {
     if (!selectedMessage) return;
-    const next = messages.find((m) => m.id === selectedMessage.id);
+    const next = slots.find((m) => m?.id === selectedMessage.id);
     if (!next) return;
     setSelectedMessage((prev) => {
       if (!prev || prev.id !== next.id) return prev;
@@ -252,47 +276,59 @@ export function App() {
         flagged: next.flagged,
       };
     });
-  }, [messages, selectedMessage?.id]);
+  }, [slots, selectedMessage?.id]);
 
-  // Debounce search so we don't hammer PocketBase on every keystroke.
   useEffect(() => {
     const handle = window.setTimeout(() => {
-      void loadMessages(selectedFolder, query, 1, false);
+      void reloadList(selectedFolderRef.current, query);
     }, query.trim() ? 250 : 0);
     return () => window.clearTimeout(handle);
-  }, [selectedFolder, query, loadMessages]);
+  }, [query, reloadList]);
 
-  // Load analyses for the visible list, and re-poll periodically so
-  // pending/running rows pick up "done" status without a full folder refresh.
   useEffect(() => {
-    void refreshAnalyses(messages.map((m) => m.id));
-  }, [messages, refreshAnalyses]);
+    void refreshAnalyses(visibleMessageIds);
+  }, [visibleMessageIds, refreshAnalyses]);
 
   useEffect(() => {
     const t = setInterval(
-      () => void refreshAnalyses(messagesRef.current.map((m) => m.id)),
+      () => void refreshAnalyses(visibleIdsRef.current),
       ANALYSIS_POLL_MS,
     );
     return () => clearInterval(t);
   }, [refreshAnalyses]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const next = await getAnalyzerStatus(pb);
+        if (!cancelled) setAnalyzerStatus(next);
+      } catch (err) {
+        console.warn("analyzer status poll failed", err);
+      }
+    };
+    void tick();
+    const t = setInterval(() => void tick(), ANALYZER_STATUS_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [pb]);
+
   const selectFolder = (id: string) => {
-    if (id === selectedFolderRef.current) return;
+    if (id === selectedFolder) return;
     selectedFolderRef.current = id;
+    queryRef.current = "";
     setSelectedFolder(id);
     setSelectedMessage(null);
     setQuery("");
-    queryRef.current = "";
-    setMessages([]);
-    setMessageTotal(0);
-    setHasMoreMessages(false);
+    void reloadList(id, "");
   };
 
   const selectMessage = async (m: Message) => {
     setSelectedMessage(m);
     setLoadingBody(true);
     try {
-      // List rows omit bodies — fetch the full record (and backfill from IMAP if empty).
       const full = await pb.collection("messages").getOne<Message>(m.id);
       let next = full;
       if (!full.body_text?.trim() && !full.body_html?.trim()) {
@@ -318,10 +354,14 @@ export function App() {
     }
   };
 
-  const loadMoreMessages = () => {
-    if (loadingMessages || !hasMoreMessages) return;
-    const nextPage = Math.floor(messages.length / MESSAGE_PAGE_SIZE) + 1;
-    void loadMessages(selectedFolderRef.current, queryRef.current, nextPage, true);
+  const patchSlot = (id: string, patch: Partial<Message>) => {
+    setSlots((prev) => {
+      const idx = prev.findIndex((row) => row?.id === id);
+      if (idx < 0 || !prev[idx]) return prev;
+      const next = prev.slice();
+      next[idx] = { ...prev[idx]!, ...patch };
+      return next;
+    });
   };
 
   if (!hasAccount) {
@@ -391,34 +431,40 @@ export function App() {
 
       {activeTab === "mail" ? (
         <div className="layout">
-          <FolderList folders={folders} selected={selectedFolder} onSelect={selectFolder} />
+          <FolderList
+            folders={folders}
+            selected={selectedFolder}
+            onSelect={selectFolder}
+            syncStatus={status}
+            analyzerStatus={analyzerStatus}
+            downloadingBody={loadingBody}
+          />
           <MessageList
-            messages={messages}
+            slots={slots}
             selectedId={selectedMessage?.id ?? null}
             totalCount={messageTotal}
             loading={loadingMessages}
-            hasMore={hasMoreMessages}
+            listKey={`${selectedFolder ?? ""}:${query}`}
             emptyLabel={
-              loadingMessages && messages.length === 0
+              loadingMessages && messageTotal === 0
                 ? "Loading…"
                 : query.trim()
                   ? "No matching emails"
                   : "No messages in this folder"
             }
             onSelect={(m) => void selectMessage(m as Message)}
-            onLoadMore={loadMoreMessages}
+            onVisibleRange={(start, end, ids) => {
+              setVisibleMessageIds(ids);
+              void ensurePages(selectedFolderRef.current, queryRef.current, start, end);
+            }}
             analysisByMessage={analysisByMessage}
             onToggleFlag={async (msg) => {
               await pb.collection("messages").update(msg.id, { flagged: !msg.flagged });
-              setMessages((prev) =>
-                prev.map((row) => (row.id === msg.id ? { ...row, flagged: !msg.flagged } : row)),
-              );
+              patchSlot(msg.id, { flagged: !msg.flagged });
             }}
             onToggleSeen={async (msg) => {
               await pb.collection("messages").update(msg.id, { seen: !msg.seen });
-              setMessages((prev) =>
-                prev.map((row) => (row.id === msg.id ? { ...row, seen: !msg.seen } : row)),
-              );
+              patchSlot(msg.id, { seen: !msg.seen });
             }}
           />
           <MessageView
@@ -437,7 +483,7 @@ export function App() {
         <ComposeModal
           pb={pb}
           onClose={() => setComposeOpen(false)}
-          onSaved={() => void loadMessages(selectedFolderRef.current, queryRef.current)}
+          onSaved={() => void reloadList(selectedFolderRef.current, queryRef.current)}
         />
       )}
       {settingsOpen && (

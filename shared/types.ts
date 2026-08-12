@@ -41,7 +41,23 @@ export interface MessageAnalysis {
 export interface AnalyzerSettings {
   model: string;
   baseUrl: string;
+  syncIntervalMinutes: number; // 1–60, default 5
 }
+
+/** Combined app settings payload (analyzer + sync). Same shape as AnalyzerSettings. */
+export type AppSettings = AnalyzerSettings;
+
+export type AnalyzerWorkerState = "idle" | "running" | "paused";
+
+export interface AnalyzerStatus {
+  state: AnalyzerWorkerState;
+  queueDepth: number;
+  currentMessageId: string;
+  message: string;
+  model: string;
+}
+
+export type ItemStatus = "draft" | "approved";
 
 export interface TodoItem {
   id: string;
@@ -50,6 +66,7 @@ export interface TodoItem {
   source_message: string;
   created_at: string;
   deadline: string;
+  status: ItemStatus;
 }
 
 export interface EventItem {
@@ -60,6 +77,7 @@ export interface EventItem {
   created_at: string;
   starts_at: string;
   ends_at: string;
+  status: ItemStatus;
 }
 
 export interface MailAccountInput {

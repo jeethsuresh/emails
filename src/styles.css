@@ -135,6 +135,50 @@ button:hover {
   background: color-mix(in srgb, var(--panel) 70%, transparent);
 }
 
+.messages {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.messages-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.messages-virtual {
+  position: relative;
+  width: 100%;
+}
+
+.messages-window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+.messages .empty {
+  margin: 0;
+  padding: 0.5rem 0.25rem;
+  color: var(--muted);
+}
+
+.folders {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0.65rem;
+  overflow: hidden;
+}
+
+.folders-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 0.5rem;
+}
+
 .reader {
   border-right: 0;
   display: flex;
@@ -151,6 +195,79 @@ button:hover {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
+}
+
+.sidebar-progress {
+  flex-shrink: 0;
+  display: grid;
+  gap: 0.45rem;
+  margin-top: auto;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--line);
+}
+
+.sidebar-progress-row {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.sidebar-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sidebar-progress-meta em {
+  flex: 1;
+  min-width: 0;
+  font-style: normal;
+  font-size: 0.65rem;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.9;
+}
+
+.sidebar-progress-track {
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 80%, transparent);
+  overflow: hidden;
+}
+
+.sidebar-progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+  transition: width 0.25s ease;
+}
+
+.sidebar-progress-fill.is-active {
+  background: var(--accent);
+}
+
+.sidebar-progress-fill.is-indeterminate {
+  width: 40%;
+  background: var(--accent);
+  animation: sidebar-progress-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes sidebar-progress-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(280%);
+  }
 }
 
 .messages h2 .count {
@@ -201,6 +318,8 @@ button:hover {
   border: 1px solid transparent;
   border-radius: 10px;
   padding: 0.35rem;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .messages .row {
@@ -578,6 +697,41 @@ button:hover {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 0.35rem;
+}
+
+.task-row.is-draft {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+.draft-tag {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  vertical-align: middle;
+}
+
+.task-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.task-actions .danger {
+  color: var(--muted);
+}
+
+.message-placeholder {
+  display: flex;
+  align-items: center;
+  padding: 0.55rem;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .task-main {

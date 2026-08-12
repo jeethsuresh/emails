@@ -14,7 +14,12 @@ function AnalyzerSettingsForm({ pb }: { pb: PocketBase }) {
 
   useEffect(() => {
     void getAnalyzerSettings(pb)
-      .then(setForm)
+      .then((s) =>
+        setForm({
+          ...s,
+          syncIntervalMinutes: s.syncIntervalMinutes || 5,
+        }),
+      )
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
   }, [pb]);
 
@@ -56,10 +61,26 @@ function AnalyzerSettingsForm({ pb }: { pb: PocketBase }) {
           placeholder="http://127.0.0.1:1234"
         />
       </label>
+      <h2 className="form-section">Sync</h2>
+      <label>
+        Sync every (minutes)
+        <input
+          type="number"
+          min={1}
+          max={60}
+          value={form.syncIntervalMinutes ?? 5}
+          onChange={(e) =>
+            setForm({
+              ...form,
+              syncIntervalMinutes: Number(e.target.value) || 5,
+            })
+          }
+        />
+      </label>
       {error && <p className="error">{error}</p>}
       <div className="modal-actions">
         <button type="submit" disabled={busy}>
-          {busy ? "Saving…" : saved ? "Saved" : "Save LLM settings"}
+          {busy ? "Saving…" : saved ? "Saved" : "Save settings"}
         </button>
       </div>
     </form>
@@ -67,13 +88,37 @@ function AnalyzerSettingsForm({ pb }: { pb: PocketBase }) {
 }
 
 function SyncLogsSection({ status }: { status: SyncStatus | null }) {
+  const [live, setLive] = useState<SyncStatus | null>(status);
+
+  useEffect(() => {
+    setLive(status);
+  }, [status]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const next = await window.email.getSyncStatus();
+        if (!cancelled) setLive(next);
+      } catch {
+        /* ignore */
+      }
+    };
+    void tick();
+    const t = setInterval(() => void tick(), 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
   return (
     <section className="settings-sync-logs">
       <h2 className="form-section">Sync logs</h2>
-      {!status ? (
+      {!live ? (
         <p className="hint">Waiting for sync status…</p>
       ) : (
-        <SyncLivePanel status={status} alwaysShow />
+        <SyncLivePanel status={live} alwaysShow />
       )}
     </section>
   );

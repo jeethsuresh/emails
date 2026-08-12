@@ -134,9 +134,8 @@ func upsertPending(app core.App, messageID string) (bool, error) {
 // Start runs the crash-recovery/backlog sweep once, then launches the
 // single-flight worker goroutine. Safe to call once at server start.
 //
-// The "created"/"updated" autodate fields the worker relies on for FIFO
-// ordering are declared on message_analysis in mailstore (both the create
-// def and ensureLLMAnalysisSchemaFields), not here.
+// Pending work is selected newest-message-first via a join on messages
+// (date DESC, uid DESC); see newestPending.
 func Start(app core.App) {
 	go func() {
 		startupSweep(app)
@@ -194,6 +193,7 @@ func sweepMissingAnalysis(app core.App) {
 			  AND LOWER(f.name) NOT LIKE '%deleted%'
 			  AND LOWER(f.name) NOT LIKE '%spam%'
 			  AND LOWER(f.name) NOT LIKE '%junk%'
+			ORDER BY m.date DESC, m.uid DESC
 			LIMIT {:limit}
 		`).Bind(dbx.Params{"limit": sweepBatchSize}).All(&rows)
 		if err != nil {
@@ -237,12 +237,13 @@ func runWorker(app core.App) {
 	for {
 		depth := countPending(app)
 
-		preferredModel, baseURL, err := LoadSettings(app)
+		settings, err := LoadSettings(app)
 		if err != nil {
 			logProgress("load settings: %v", err)
 			sleepOrWake(pauseInterval)
 			continue
 		}
+		preferredModel, baseURL := settings.Model, settings.BaseURL
 
 		if !Reachable(baseURL) {
 			setStatus(func(s *Status) {
@@ -277,9 +278,9 @@ func runWorker(app core.App) {
 			continue
 		}
 
-		rec, err := oldestPending(app)
+		rec, err := newestPending(app)
 		if err != nil {
-			logProgress("query oldest pending: %v", err)
+			logProgress("query newest pending: %v", err)
 			sleepOrWake(idleInterval)
 			continue
 		}
@@ -311,19 +312,33 @@ func countPending(app core.App) int {
 	return int(n)
 }
 
-func oldestPending(app core.App) (*core.Record, error) {
+type pendingRow struct {
+	ID string `db:"id"`
+}
+
+// newestPending returns the pending analysis row whose linked message is
+// newest (messages.date DESC, then uid DESC). Nil when the queue is empty.
+func newestPending(app core.App) (*core.Record, error) {
+	var rows []pendingRow
+	err := app.DB().NewQuery(`
+		SELECT a.id AS id
+		FROM message_analysis a
+		JOIN messages m ON m.id = a.message
+		WHERE a.status = 'pending'
+		ORDER BY m.date DESC, m.uid DESC
+		LIMIT 1
+	`).All(&rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
 	col, err := app.FindCollectionByNameOrId("message_analysis")
 	if err != nil {
 		return nil, err
 	}
-	recs, err := app.FindRecordsByFilter(col.Id, "status = 'pending'", "+created", 1, 0)
-	if err != nil {
-		return nil, err
-	}
-	if len(recs) == 0 {
-		return nil, nil
-	}
-	return recs[0], nil
+	return app.FindRecordById(col, rows[0].ID)
 }
 
 func processMessage(app core.App, rec *core.Record, baseURL, model string, depth int) {
@@ -389,6 +404,10 @@ func processMessage(app core.App, rec *core.Record, baseURL, model string, depth
 	rec.Set("analyzed_at", time.Now().UTC().Format(time.RFC3339))
 	if err := app.Save(rec); err != nil {
 		logProgress("save result for %s: %v", messageID, err)
+		return
+	}
+	if err := upsertDraftFromAnalysis(app, messageID, result); err != nil {
+		logProgress("upsert draft for %s: %v", messageID, err)
 	}
 }
 

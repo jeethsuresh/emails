@@ -45,7 +45,7 @@ func TestApplyAndUpsertMessageMetadata(t *testing.T) {
 	if err := UpsertThreadFromMessage(app, msg); err != nil {
 		t.Fatal(err)
 	}
-	if err := UpsertContactFromMessage(app, msg); err != nil {
+	if err := UpsertContactFromMessage(app, msg, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -81,7 +81,7 @@ func TestUpsertContactSkipsAccountAddress(t *testing.T) {
 		"from_addr": "Me <ME@example.com>",
 	})
 
-	if err := UpsertContactFromMessage(app, msg); err != nil {
+	if err := UpsertContactFromMessage(app, msg, true); err != nil {
 		t.Fatal(err)
 	}
 	contacts, err := app.FindAllRecords("contacts")
@@ -90,6 +90,101 @@ func TestUpsertContactSkipsAccountAddress(t *testing.T) {
 	}
 	if len(contacts) != 0 {
 		t.Fatalf("got %d contacts", len(contacts))
+	}
+}
+
+func TestUpsertContactCountsOnlyNewMessages(t *testing.T) {
+	app := newMailmetaTestApp(t)
+	account := saveTestRecord(t, app, "accounts", map[string]any{"email": "me@example.com"})
+	first := saveTestRecord(t, app, "messages", map[string]any{
+		"account":   account.Id,
+		"folder":    "folder01",
+		"from_addr": "Alice <alice@example.net>",
+		"date":      "2026-08-13T12:00:00Z",
+	})
+
+	if err := UpsertContactFromMessage(app, first, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertContactFromMessage(app, first, false); err != nil {
+		t.Fatal(err)
+	}
+
+	contact, err := app.FindFirstRecordByFilter("contacts", "email = 'alice@example.net'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := contact.GetFloat("message_count"); got != 1 {
+		t.Fatalf("message_count after reprocessing = %v", got)
+	}
+
+	second := saveTestRecord(t, app, "messages", map[string]any{
+		"account":   account.Id,
+		"folder":    "folder01",
+		"from_addr": "Alice <alice@example.net>",
+		"date":      "2026-08-13T13:00:00Z",
+	})
+	if err := UpsertContactFromMessage(app, second, true); err != nil {
+		t.Fatal(err)
+	}
+	contact, err = app.FindFirstRecordByFilter("contacts", "email = 'alice@example.net'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := contact.GetFloat("message_count"); got != 2 {
+		t.Fatalf("message_count after new message = %v", got)
+	}
+}
+
+func TestUpsertContactKeepsNewestMessageDate(t *testing.T) {
+	app := newMailmetaTestApp(t)
+	account := saveTestRecord(t, app, "accounts", map[string]any{"email": "me@example.com"})
+	newer := saveTestRecord(t, app, "messages", map[string]any{
+		"account":   account.Id,
+		"folder":    "folder01",
+		"from_addr": "Alice <alice@example.net>",
+		"date":      "2026-08-13T13:00:00Z",
+	})
+	older := saveTestRecord(t, app, "messages", map[string]any{
+		"account":   account.Id,
+		"folder":    "folder01",
+		"from_addr": "Alice <alice@example.net>",
+		"date":      "2026-08-13T12:00:00Z",
+	})
+
+	if err := UpsertContactFromMessage(app, newer, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertContactFromMessage(app, older, true); err != nil {
+		t.Fatal(err)
+	}
+
+	contact, err := app.FindFirstRecordByFilter("contacts", "email = 'alice@example.net'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := contact.GetString("last_message_at"); got != "2026-08-13T13:00:00Z" {
+		t.Fatalf("last_message_at = %q", got)
+	}
+}
+
+func TestShouldUpdateLastMessageAtRejectsUnparseableDates(t *testing.T) {
+	tests := []struct {
+		name      string
+		current   string
+		candidate string
+		want      bool
+	}{
+		{name: "invalid candidate", current: "2026-08-13T12:00:00Z", candidate: "not-a-date", want: false},
+		{name: "invalid current", current: "not-a-date", candidate: "2026-08-13T12:00:00Z", want: false},
+		{name: "empty current", current: "", candidate: "not-a-date", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldUpdateLastMessageAt(tt.current, tt.candidate); got != tt.want {
+				t.Fatalf("shouldUpdateLastMessageAt(%q, %q) = %v, want %v", tt.current, tt.candidate, got, tt.want)
+			}
+		})
 	}
 }
 

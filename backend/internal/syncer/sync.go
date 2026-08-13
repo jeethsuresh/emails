@@ -859,6 +859,7 @@ func ingestBuffer(app core.App, accountID, accountEmail, folderID string, buf *i
 
 	uid := buf.UID
 	rec, err := app.FindFirstRecordByFilter(col, "folder = {:f} && uid = {:u}", dbx.Params{"f": folderID, "u": float64(uid)})
+	created := err != nil
 	if err != nil {
 		rec = core.NewRecord(col)
 		rec.Set("folder", folderID)
@@ -1000,7 +1001,7 @@ func ingestBuffer(app core.App, accountID, accountEmail, folderID string, buf *i
 		return fmt.Errorf("save message uid=%d: %w", uid, err)
 	}
 	_ = mailmeta.UpsertThreadFromMessage(app, rec)
-	_ = mailmeta.UpsertContactFromMessage(app, rec)
+	_ = mailmeta.UpsertContactFromMessage(app, rec, created)
 	enqueueIfBodied(app, rec)
 	return nil
 }

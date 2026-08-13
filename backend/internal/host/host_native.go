@@ -21,16 +21,7 @@ func AttachmentsDir() string { return "./attachments" }
 func ReportStatus(Status)    {}
 
 func MimeHeaderGet(raw, name string) string {
-	for _, line := range strings.Split(raw, "\n") {
-		l := strings.TrimRight(line, "\r")
-		if len(l) >= len(name)+1 && strings.EqualFold(l[:len(name)+1], name+":") {
-			return strings.TrimSpace(l[len(name)+1:])
-		}
-		if l == "" {
-			break
-		}
-	}
-	return ""
+	return mimeHeaderGet(raw, name)
 }
 
 func Hash(input string) string {

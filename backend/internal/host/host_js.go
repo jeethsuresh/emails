@@ -8,11 +8,11 @@ import (
 )
 
 type Status struct {
-	State           string  `json:"state"`
-	Message         string  `json:"message"`
-	LastSyncAt      *string `json:"lastSyncAt"`
-	FoldersSynced   int     `json:"foldersSynced"`
-	MessagesSynced  int     `json:"messagesSynced"`
+	State          string  `json:"state"`
+	Message        string  `json:"message"`
+	LastSyncAt     *string `json:"lastSyncAt"`
+	FoldersSynced  int     `json:"foldersSynced"`
+	MessagesSynced int     `json:"messagesSynced"`
 }
 
 func DataDir() string {
@@ -50,15 +50,11 @@ func ReportStatus(s Status) {
 	fn.Invoke(string(b))
 }
 
-// Core calls into C WASM via JS glue (emailCore).
 func MimeHeaderGet(raw, name string) string {
-	core := js.Global().Get("emailCore")
-	if !core.Truthy() {
-		return ""
-	}
-	return core.Call("mimeHeaderGet", raw, name).String()
+	return mimeHeaderGet(raw, name)
 }
 
+// Core calls into C WASM via JS glue (emailCore).
 func Hash(input string) string {
 	core := js.Global().Get("emailCore")
 	if !core.Truthy() {

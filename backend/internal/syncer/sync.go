@@ -11,6 +11,7 @@ import (
 
 	"email.local/backend/internal/analyzer"
 	"email.local/backend/internal/host"
+	"email.local/backend/internal/mailmeta"
 	"email.local/backend/internal/mailparse"
 	"email.local/backend/internal/netbridge"
 
@@ -624,7 +625,7 @@ func syncFolder(app core.App, acc *core.Record, client *imapclient.Client, name 
 		if r.low > r.high {
 			continue
 		}
-		n, err := fetchUIDRangeNewestFirst(app, acc.Id, folderRec.Id, client, r.low, r.high)
+		n, err := fetchUIDRangeNewestFirst(app, acc.Id, acc.GetString("email"), folderRec.Id, client, r.low, r.high)
 		if err != nil {
 			return count, true, err
 		}
@@ -639,7 +640,7 @@ func syncFolder(app core.App, acc *core.Record, client *imapclient.Client, name 
 
 	// Repair messages that were synced as headers-only before body caching existed.
 	if !skipBodyFill(name) {
-		if filled, err := fillMissingBodies(app, acc.Id, folderRec.Id, client, bodyFillBatchSize); err == nil {
+		if filled, err := fillMissingBodies(app, acc.Id, acc.GetString("email"), folderRec.Id, client, bodyFillBatchSize); err == nil {
 			count += filled
 		} else {
 			logProgress("  %s body fill: %v", name, err)
@@ -663,7 +664,7 @@ type uidRange struct {
 	low, high uint32
 }
 
-func fetchUIDSet(app core.App, accountID, folderID string, client *imapclient.Client, uids []uint32) (int, error) {
+func fetchUIDSet(app core.App, accountID, accountEmail, folderID string, client *imapclient.Client, uids []uint32) (int, error) {
 	if len(uids) == 0 {
 		return 0, nil
 	}
@@ -716,7 +717,7 @@ func fetchUIDSet(app core.App, accountID, folderID string, client *imapclient.Cl
 				})
 			}
 		}
-		if err := ingestBuffer(app, accountID, folderID, buf); err != nil {
+		if err := ingestBuffer(app, accountID, accountEmail, folderID, buf); err != nil {
 			logProgress("  uid %d: ingest failed: %v", u, err)
 			continue
 		}
@@ -725,7 +726,7 @@ func fetchUIDSet(app core.App, accountID, folderID string, client *imapclient.Cl
 	return count, nil
 }
 
-func fillMissingBodies(app core.App, accountID, folderID string, client *imapclient.Client, limit int) (int, error) {
+func fillMissingBodies(app core.App, accountID, accountEmail, folderID string, client *imapclient.Client, limit int) (int, error) {
 	if limit <= 0 {
 		return 0, nil
 	}
@@ -755,7 +756,7 @@ func fillMissingBodies(app core.App, accountID, folderID string, client *imapcli
 		return 0, nil
 	}
 	logProgress("  body fill fetching %d uids", len(uids))
-	n, err := fetchUIDSet(app, accountID, folderID, client, uids)
+	n, err := fetchUIDSet(app, accountID, accountEmail, folderID, client, uids)
 	if err != nil {
 		logProgress("  body fill fetch failed (%d uids): %v", len(uids), err)
 		return n, err
@@ -776,7 +777,7 @@ func fillMissingBodies(app core.App, accountID, folderID string, client *imapcli
 	return n, nil
 }
 
-func fetchUIDRangeNewestFirst(app core.App, accountID, folderID string, client *imapclient.Client, low, high uint32) (int, error) {
+func fetchUIDRangeNewestFirst(app core.App, accountID, accountEmail, folderID string, client *imapclient.Client, low, high uint32) (int, error) {
 	// Walk descending chunks so ingest order is reverse-chronological within the range.
 	count := 0
 	chunk := uint32(backfillBatchSize)
@@ -792,7 +793,7 @@ func fetchUIDRangeNewestFirst(app core.App, accountID, folderID string, client *
 				break
 			}
 		}
-		n, err := fetchUIDSet(app, accountID, folderID, client, uids)
+		n, err := fetchUIDSet(app, accountID, accountEmail, folderID, client, uids)
 		count += n
 		if err != nil {
 			return count, err
@@ -847,7 +848,7 @@ func folderRole(name string) string {
 	}
 }
 
-func ingestBuffer(app core.App, accountID, folderID string, buf *imapclient.FetchMessageBuffer) error {
+func ingestBuffer(app core.App, accountID, accountEmail, folderID string, buf *imapclient.FetchMessageBuffer) error {
 	if buf == nil || buf.UID == 0 {
 		return fmt.Errorf("missing uid")
 	}
@@ -933,6 +934,23 @@ func ingestBuffer(app core.App, accountID, folderID string, buf *imapclient.Fetc
 		parsed = mailparse.ParseRFC822(rawMessage)
 	}()
 
+	headers := make(map[string]string, 10)
+	rawHeaders := string(rawMessage)
+	for _, name := range []string{
+		"Message-ID",
+		"Subject",
+		"In-Reply-To",
+		"References",
+		"Delivered-To",
+		"X-Original-To",
+		"X-Delivered-To",
+		"Envelope-To",
+		"To",
+		"Cc",
+	} {
+		headers[name] = host.MimeHeaderGet(rawHeaders, name)
+	}
+
 	subject = decodeMIMEWords(subject)
 	snippet := parsed.Snippet
 	if snippet == "" {
@@ -977,9 +995,12 @@ func ingestBuffer(app core.App, accountID, folderID string, buf *imapclient.Fetc
 	}
 	rec.Set("search_tokens", strings.Join(host.Tokenize(searchSrc), " "))
 	rec.Set("content_hash", host.Hash(messageID+"|"+subject+"|"+fmt.Sprintf("%d", len(parsed.Text)+len(parsed.HTML))))
+	mailmeta.ApplyMessageMeta(app, rec, headers, accountEmail)
 	if err := app.Save(rec); err != nil {
 		return fmt.Errorf("save message uid=%d: %w", uid, err)
 	}
+	_ = mailmeta.UpsertThreadFromMessage(app, rec)
+	_ = mailmeta.UpsertContactFromMessage(app, rec)
 	enqueueIfBodied(app, rec)
 	return nil
 }
@@ -1099,7 +1120,7 @@ func FetchMessageBody(app core.App, messageID string) (*core.Record, error) {
 	if _, err := client.Select(folderRec.GetString("name"), nil).Wait(); err != nil {
 		return nil, fmt.Errorf("select: %w", err)
 	}
-	if _, err := fetchUIDSet(app, accountID, folderID, client, []uint32{uid}); err != nil {
+	if _, err := fetchUIDSet(app, accountID, acc.GetString("email"), folderID, client, []uint32{uid}); err != nil {
 		return nil, err
 	}
 	rec, err = app.FindRecordById(msgCol, messageID)

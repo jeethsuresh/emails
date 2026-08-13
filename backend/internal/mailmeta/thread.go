@@ -45,11 +45,11 @@ func CollectMessageIDs(inReplyTo, references string) []string {
 func NewThreadID(messageID string) string {
 	n := NormalizeMessageID(messageID)
 	if n == "" {
-		return fmt.Sprintf("t_%d", time.Now().UnixNano())
+		return fmt.Sprintf("t%014x", uint64(time.Now().UnixNano())&0x3fffffffffffff)
 	}
-	h := fnv.New32a()
+	h := fnv.New64a()
 	_, _ = h.Write([]byte("thread|" + n))
-	return fmt.Sprintf("%08x", h.Sum32())
+	return fmt.Sprintf("%015x", h.Sum64()&0x0fffffffffffffff)
 }
 
 func ResolveThreadID(messageID, inReplyTo, references, subject, from string, toAddrs string, lookup ThreadLookup, now time.Time) string {

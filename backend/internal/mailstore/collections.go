@@ -577,7 +577,10 @@ func ensureMailFeatureSchema(app core.App) error {
 	if err := ensureContactsMailFields(app); err != nil {
 		return err
 	}
-	return ensureMailIndexes(app)
+	if err := ensureMailIndexes(app); err != nil {
+		return err
+	}
+	return BackfillMailMeta(app)
 }
 
 func ensureMessageThreadFields(app core.App) error {

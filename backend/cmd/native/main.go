@@ -7,6 +7,7 @@ import (
 
 	"email.local/backend/internal/analyzer"
 	"email.local/backend/internal/calendar"
+	"email.local/backend/internal/mailapi"
 	"email.local/backend/internal/mailstore"
 	"email.local/backend/internal/syncer"
 
@@ -30,6 +31,7 @@ func main() {
 	syncer.Register(app)
 	analyzer.Register(app)
 	calendar.Register(app)
+	mailapi.Register(app)
 
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.BindFunc(func(re *core.RequestEvent) error {

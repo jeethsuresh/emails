@@ -78,12 +78,17 @@ export function MessageView({
   loadingBody = false,
   analysis,
   onApplyAnalysis,
+  onComposeReply,
 }: {
   message: Message | null;
   loadingBody?: boolean;
   analysis?: MessageAnalysis;
   onApplyAnalysis?: (analysis: MessageAnalysis) => Promise<void>;
+  onComposeReply?: (useSuggestedReply: boolean) => Promise<void>;
 }) {
+  const [composeBusy, setComposeBusy] = useState(false);
+  const [composeError, setComposeError] = useState<string | null>(null);
+
   if (!message) {
     return (
       <article className="reader empty-reader">
@@ -96,6 +101,17 @@ export function MessageView({
   const text = message.body_text?.trim() ?? "";
   const hasHtml = html.length > 0;
   const subject = decodeMIMEWords(message.subject || "");
+  const suggestedReply = analysis?.suggested_reply.trim() ?? "";
+  const composeReply = (useSuggestedReply: boolean) => {
+    if (!onComposeReply) return;
+    setComposeBusy(true);
+    setComposeError(null);
+    void onComposeReply(useSuggestedReply)
+      .catch((err: unknown) =>
+        setComposeError(err instanceof Error ? err.message : String(err)),
+      )
+      .finally(() => setComposeBusy(false));
+  };
 
   return (
     <article className="reader">
@@ -107,6 +123,34 @@ export function MessageView({
         </p>
         <time>{message.date ? new Date(message.date).toLocaleString() : ""}</time>
       </header>
+      {onComposeReply ? (
+        <section className="analysis-panel">
+          {suggestedReply ? (
+            <p className="analysis-suggestion">
+              Suggested reply: <span>{suggestedReply}</span>
+            </p>
+          ) : null}
+          <div className="analysis-actions">
+            {suggestedReply ? (
+              <button
+                type="button"
+                disabled={composeBusy}
+                onClick={() => composeReply(true)}
+              >
+                Use reply
+              </button>
+            ) : null}
+            <button
+              type="button"
+              disabled={composeBusy}
+              onClick={() => composeReply(false)}
+            >
+              {composeBusy ? "Preparing…" : "Reply"}
+            </button>
+            {composeError ? <span className="error">{composeError}</span> : null}
+          </div>
+        </section>
+      ) : null}
       {analysis && onApplyAnalysis ? (
         <AnalysisPanel
           key={analysis.message}

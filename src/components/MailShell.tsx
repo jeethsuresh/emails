@@ -41,6 +41,7 @@ export function MailShell({
   onToggleFlag,
   onToggleSeen,
   onApplyAnalysis,
+  onComposeReply,
   onPaneMeta,
 }: {
   viewport: Viewport;
@@ -63,6 +64,7 @@ export function MailShell({
   onToggleFlag: (m: ListMessage) => void;
   onToggleSeen: (m: ListMessage) => void;
   onApplyAnalysis: (a: MessageAnalysis) => void | Promise<void>;
+  onComposeReply: (messageId: string, useSuggestedReply: boolean) => Promise<void>;
   onPaneMeta?: (meta: MailPaneMeta) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -184,6 +186,12 @@ export function MailShell({
           onApplyAnalysis={async (a): Promise<void> => {
             await Promise.resolve(onApplyAnalysis(a));
           }}
+          onComposeReply={
+            selectedMessage
+              ? (useSuggestedReply) =>
+                  onComposeReply(selectedMessage.id, useSuggestedReply)
+              : undefined
+          }
         />
       </div>
 

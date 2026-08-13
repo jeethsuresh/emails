@@ -13,6 +13,11 @@ import {
   pagesForRange,
   type ListMessage,
 } from "./lib/messageCache";
+import {
+  composeReply,
+  listAliases,
+  type ComposePrefill,
+} from "./lib/mailApi";
 import { AccountSetup } from "./components/AccountSetup";
 import { AppChrome, type AppTab } from "./components/AppChrome";
 import { MailShell, type MailPaneMeta } from "./components/MailShell";
@@ -51,6 +56,8 @@ export function App() {
   const [query, setQuery] = useState("");
   const [hasAccount, setHasAccount] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [composePrefill, setComposePrefill] = useState<ComposePrefill>();
+  const [aliases, setAliases] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -260,6 +267,22 @@ export function App() {
   }, [refreshFolders]);
 
   useEffect(() => {
+    if (!hasAccount) {
+      setAliases([]);
+      return;
+    }
+    let cancelled = false;
+    void listAliases(pb)
+      .then((rows) => {
+        if (!cancelled) setAliases(rows.map((row) => row.email));
+      })
+      .catch((err: unknown) => console.error("listAliases failed", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [hasAccount, pb]);
+
+  useEffect(() => {
     if (!selectedMessage) return;
     const next = slots.find((m) => m?.id === selectedMessage.id);
     if (!next) return;
@@ -363,6 +386,15 @@ export function App() {
     });
   };
 
+  const openComposeReply = async (
+    messageId: string,
+    useSuggestedReply: boolean,
+  ) => {
+    const nextPrefill = await composeReply(pb, messageId, useSuggestedReply);
+    setComposePrefill(nextPrefill);
+    setComposeOpen(true);
+  };
+
   if (!hasAccount) {
     return (
       <div className="setup-screen">
@@ -389,7 +421,10 @@ export function App() {
       search={query}
       onSearchChange={setQuery}
       showSearch={activeTab === "mail"}
-      onCompose={() => setComposeOpen(true)}
+      onCompose={() => {
+        setComposePrefill(undefined);
+        setComposeOpen(true);
+      }}
       onSettings={() => setSettingsOpen(true)}
       onSync={() => void window.email.triggerSync()}
       status={status}
@@ -425,6 +460,7 @@ export function App() {
             patchSlot(msg.id, { seen: !msg.seen });
           }}
           onApplyAnalysis={applyAnalysis}
+          onComposeReply={openComposeReply}
           onPaneMeta={setMailMeta}
         />
       ) : null}
@@ -435,8 +471,14 @@ export function App() {
       {composeOpen && (
         <ComposeModal
           pb={pb}
-          onClose={() => setComposeOpen(false)}
+          prefill={composePrefill}
+          aliases={aliases}
+          onClose={() => {
+            setComposeOpen(false);
+            setComposePrefill(undefined);
+          }}
           onSaved={() => void reloadList(selectedFolderRef.current, queryRef.current)}
+          onSent={() => void reloadList(selectedFolderRef.current, queryRef.current)}
         />
       )}
       {settingsOpen && (

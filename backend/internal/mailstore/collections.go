@@ -64,6 +64,11 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.BoolField{Name: "flagged"})
 			c.Fields.Add(&core.TextField{Name: "search_tokens", Max: 100_000})
 			c.Fields.Add(&core.TextField{Name: "content_hash"})
+			c.Fields.Add(&core.TextField{Name: "in_reply_to"})
+			c.Fields.Add(&core.TextField{Name: "references", Max: 20_000})
+			c.Fields.Add(&core.TextField{Name: "thread_id"})
+			c.Fields.Add(&core.TextField{Name: "received_for"})
+			c.Fields.Add(&core.TextField{Name: "normalized_subject"})
 		}},
 		{"attachments", func(c *core.Collection) {
 			c.Fields.Add(&core.TextField{Name: "message", Required: true})
@@ -79,6 +84,14 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.TextField{Name: "subject"})
 			c.Fields.Add(&core.TextField{Name: "body_text", Max: 2_000_000})
 			c.Fields.Add(&core.TextField{Name: "body_html", Max: 2_000_000})
+			c.Fields.Add(&core.TextField{Name: "from_addr"})
+			c.Fields.Add(&core.TextField{Name: "in_reply_to"})
+			c.Fields.Add(&core.TextField{Name: "references", Max: 20_000})
+			c.Fields.Add(&core.TextField{Name: "thread_id"})
+			c.Fields.Add(&core.TextField{Name: "status"})
+			c.Fields.Add(&core.TextField{Name: "last_error", Max: 20_000})
+			c.Fields.Add(&core.TextField{Name: "sent_at"})
+			c.Fields.Add(&core.TextField{Name: "message_id"})
 		}},
 		{"sync_meta", func(c *core.Collection) {
 			c.Fields.Add(&core.TextField{Name: "account", Required: true})
@@ -91,6 +104,23 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.TextField{Name: "email", Required: true})
 			c.Fields.Add(&core.TextField{Name: "display_name"})
 			c.Fields.Add(&core.TextField{Name: "graph_json"})
+			c.Fields.Add(&core.TextField{Name: "last_message_at"})
+			c.Fields.Add(&core.NumberField{Name: "message_count"})
+			c.Fields.Add(&core.TextField{Name: "updated_at"})
+			c.AddIndex("idx_contacts_email", true, "`email`", "")
+		}},
+		{"threads", func(c *core.Collection) {
+			c.Fields.Add(&core.TextField{Name: "subject"})
+			c.Fields.Add(&core.TextField{Name: "normalized_subject"})
+			c.Fields.Add(&core.TextField{Name: "snippet"})
+			c.Fields.Add(&core.TextField{Name: "last_date"})
+			c.Fields.Add(&core.NumberField{Name: "message_count"})
+			c.Fields.Add(&core.TextField{Name: "participants", Max: 20_000})
+			c.Fields.Add(&core.TextField{Name: "received_for"})
+			c.Fields.Add(&core.TextField{Name: "folder"})
+			c.Fields.Add(&core.NumberField{Name: "unread_count"})
+			c.Fields.Add(&core.TextField{Name: "updated_at"})
+			c.AddIndex("idx_threads_folder_last_date", false, "`folder`,`last_date`", "")
 		}},
 		{"message_analysis", func(c *core.Collection) {
 			c.Fields.Add(&core.TextField{Name: "message", Required: true})
@@ -529,6 +559,159 @@ func ensureDefaultCalendarAndMigrateEvents(app core.App) error {
 			if err := app.Save(ev); err != nil {
 				return fmt.Errorf("migrate event %s: %w", ev.Id, err)
 			}
+		}
+	}
+	return ensureMailFeatureSchema(app)
+}
+
+func ensureMailFeatureSchema(app core.App) error {
+	if err := ensureMessageThreadFields(app); err != nil {
+		return err
+	}
+	if err := ensureThreadsCollection(app); err != nil {
+		return err
+	}
+	if err := ensureDraftSendFields(app); err != nil {
+		return err
+	}
+	if err := ensureContactsMailFields(app); err != nil {
+		return err
+	}
+	return ensureMailIndexes(app)
+}
+
+func ensureMessageThreadFields(app core.App) error {
+	col, err := app.FindCollectionByNameOrId("messages")
+	if err != nil {
+		return err
+	}
+	changed := false
+	add := func(f core.Field) {
+		if col.Fields.GetByName(f.GetName()) == nil {
+			col.Fields.Add(f)
+			changed = true
+		}
+	}
+	add(&core.TextField{Name: "in_reply_to"})
+	add(&core.TextField{Name: "references", Max: 20_000})
+	add(&core.TextField{Name: "thread_id"})
+	add(&core.TextField{Name: "received_for"})
+	add(&core.TextField{Name: "normalized_subject"})
+	if !changed {
+		return nil
+	}
+	return app.Save(col)
+}
+
+func ensureThreadsCollection(app core.App) error {
+	if _, err := app.FindCollectionByNameOrId("threads"); err == nil {
+		return nil
+	}
+	c := core.NewBaseCollection("threads")
+	c.ListRule = types.Pointer("")
+	c.ViewRule = types.Pointer("")
+	c.CreateRule = types.Pointer("")
+	c.UpdateRule = types.Pointer("")
+	c.DeleteRule = types.Pointer("")
+	c.Fields.Add(&core.TextField{Name: "subject"})
+	c.Fields.Add(&core.TextField{Name: "normalized_subject"})
+	c.Fields.Add(&core.TextField{Name: "snippet"})
+	c.Fields.Add(&core.TextField{Name: "last_date"})
+	c.Fields.Add(&core.NumberField{Name: "message_count"})
+	c.Fields.Add(&core.TextField{Name: "participants", Max: 20_000})
+	c.Fields.Add(&core.TextField{Name: "received_for"})
+	c.Fields.Add(&core.TextField{Name: "folder"})
+	c.Fields.Add(&core.NumberField{Name: "unread_count"})
+	c.Fields.Add(&core.TextField{Name: "updated_at"})
+	return app.Save(c)
+}
+
+func ensureDraftSendFields(app core.App) error {
+	col, err := app.FindCollectionByNameOrId("drafts")
+	if err != nil {
+		return err
+	}
+	changed := false
+	add := func(f core.Field) {
+		if col.Fields.GetByName(f.GetName()) == nil {
+			col.Fields.Add(f)
+			changed = true
+		}
+	}
+	add(&core.TextField{Name: "from_addr"})
+	add(&core.TextField{Name: "in_reply_to"})
+	add(&core.TextField{Name: "references", Max: 20_000})
+	add(&core.TextField{Name: "thread_id"})
+	add(&core.TextField{Name: "status"}) // draft | queued | sending | sent | failed
+	add(&core.TextField{Name: "last_error", Max: 20_000})
+	add(&core.TextField{Name: "sent_at"})
+	add(&core.TextField{Name: "message_id"})
+	if !changed {
+		return nil
+	}
+	return app.Save(col)
+}
+
+func ensureContactsMailFields(app core.App) error {
+	col, err := app.FindCollectionByNameOrId("contacts")
+	if err != nil {
+		return err
+	}
+	changed := false
+	add := func(f core.Field) {
+		if col.Fields.GetByName(f.GetName()) == nil {
+			col.Fields.Add(f)
+			changed = true
+		}
+	}
+	add(&core.TextField{Name: "last_message_at"})
+	add(&core.NumberField{Name: "message_count"})
+	add(&core.TextField{Name: "updated_at"})
+	if !changed {
+		return nil
+	}
+	return app.Save(col)
+}
+
+func ensureMailIndexes(app core.App) error {
+	msg, err := app.FindCollectionByNameOrId("messages")
+	if err != nil {
+		return err
+	}
+	addIdx := func(col *core.Collection, name, cols string) error {
+		if col.GetIndex(name) != "" {
+			return nil
+		}
+		col.AddIndex(name, false, cols, "")
+		return app.Save(col)
+	}
+	if err := addIdx(msg, "idx_messages_thread_date", "`thread_id`,`date`"); err != nil {
+		return err
+	}
+	if err := addIdx(msg, "idx_messages_received_for_date", "`received_for`,`date`"); err != nil {
+		return err
+	}
+	if err := addIdx(msg, "idx_messages_from_date", "`from_addr`,`date`"); err != nil {
+		return err
+	}
+	if err := addIdx(msg, "idx_messages_message_id", "`message_id`"); err != nil {
+		return err
+	}
+	thr, err := app.FindCollectionByNameOrId("threads")
+	if err != nil {
+		return err
+	}
+	if err := addIdx(thr, "idx_threads_folder_last_date", "`folder`,`last_date`"); err != nil {
+		return err
+	}
+	ct, err := app.FindCollectionByNameOrId("contacts")
+	if err != nil {
+		return err
+	}
+	if ct.GetIndex("idx_contacts_email") == "" {
+		ct.AddIndex("idx_contacts_email", true, "`email`", "")
+		if err := app.Save(ct); err != nil {
+			return err
 		}
 	}
 	return nil

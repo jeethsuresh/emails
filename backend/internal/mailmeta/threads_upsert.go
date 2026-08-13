@@ -9,6 +9,20 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
+// threadMemberRow projects only the columns thread aggregates need, so
+// recomputing a thread never pulls message bodies into memory.
+type threadMemberRow struct {
+	Subject           string `db:"subject"`
+	NormalizedSubject string `db:"normalized_subject"`
+	Snippet           string `db:"snippet"`
+	Date              string `db:"date"`
+	FromAddr          string `db:"from_addr"`
+	ToAddrs           string `db:"to_addrs"`
+	ReceivedFor       string `db:"received_for"`
+	Folder            string `db:"folder"`
+	Seen              bool   `db:"seen"`
+}
+
 func UpsertThreadFromMessage(app core.App, msg *core.Record) error {
 	threadID := strings.TrimSpace(msg.GetString("thread_id"))
 	if threadID == "" {
@@ -24,30 +38,65 @@ func UpsertThreadFromMessage(app core.App, msg *core.Record) error {
 		thread.Id = threadID
 	}
 
-	messages, err := app.FindRecordsByFilter(
-		"messages",
-		"thread_id = {:thread}",
-		"-date",
-		0,
-		0,
-		dbx.Params{"thread": threadID},
-	)
+	members, err := threadMembers(app, threadID)
 	if err != nil {
 		return err
 	}
-	if len(messages) == 0 {
-		messages = []*core.Record{msg}
+	if len(members) == 0 {
+		members = []threadMemberRow{memberFromRecord(msg)}
 	}
-	latest := messages[0]
+	applyThreadAggregates(thread, members)
+	return app.Save(thread)
+}
+
+// RecountThread refreshes a thread from its remaining messages and deletes it
+// when the last message moved to another thread, so no empty thread lingers.
+func RecountThread(app core.App, threadID string) error {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil
+	}
+	thread, err := app.FindRecordById("threads", threadID)
+	if err != nil {
+		return nil
+	}
+	members, err := threadMembers(app, threadID)
+	if err != nil {
+		return err
+	}
+	if len(members) == 0 {
+		return app.Delete(thread)
+	}
+	applyThreadAggregates(thread, members)
+	return app.Save(thread)
+}
+
+func threadMembers(app core.App, threadID string) ([]threadMemberRow, error) {
+	rows := make([]threadMemberRow, 0, 8)
+	err := app.DB().NewQuery(`
+		SELECT subject, normalized_subject, snippet, date,
+		       from_addr, to_addrs, received_for, folder, seen
+		FROM messages
+		WHERE thread_id = {:thread}
+		ORDER BY date DESC
+	`).Bind(dbx.Params{"thread": threadID}).All(&rows)
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func applyThreadAggregates(thread *core.Record, members []threadMemberRow) {
+	latest := members[0]
 	participants := map[string]struct{}{}
 	unreadCount := 0
-	for _, message := range messages {
-		for _, email := range append(ParseAddressList(message.GetString("from_addr")), ParseAddressList(message.GetString("to_addrs"))...) {
+	for _, member := range members {
+		for _, email := range append(ParseAddressList(member.FromAddr), ParseAddressList(member.ToAddrs)...) {
 			if email != "" {
 				participants[email] = struct{}{}
 			}
 		}
-		if !message.GetBool("seen") {
+		if !member.Seen {
 			unreadCount++
 		}
 	}
@@ -57,15 +106,28 @@ func UpsertThreadFromMessage(app core.App, msg *core.Record) error {
 	}
 	sort.Strings(participantList)
 
-	thread.Set("subject", latest.GetString("subject"))
-	thread.Set("normalized_subject", latest.GetString("normalized_subject"))
-	thread.Set("snippet", latest.GetString("snippet"))
-	thread.Set("last_date", latest.GetString("date"))
-	thread.Set("message_count", len(messages))
+	thread.Set("subject", latest.Subject)
+	thread.Set("normalized_subject", latest.NormalizedSubject)
+	thread.Set("snippet", latest.Snippet)
+	thread.Set("last_date", latest.Date)
+	thread.Set("message_count", len(members))
 	thread.Set("participants", strings.Join(participantList, ", "))
-	thread.Set("received_for", latest.GetString("received_for"))
-	thread.Set("folder", latest.GetString("folder"))
+	thread.Set("received_for", latest.ReceivedFor)
+	thread.Set("folder", latest.Folder)
 	thread.Set("unread_count", unreadCount)
 	thread.Set("updated_at", time.Now().UTC().Format(time.RFC3339))
-	return app.Save(thread)
+}
+
+func memberFromRecord(msg *core.Record) threadMemberRow {
+	return threadMemberRow{
+		Subject:           msg.GetString("subject"),
+		NormalizedSubject: msg.GetString("normalized_subject"),
+		Snippet:           msg.GetString("snippet"),
+		Date:              msg.GetString("date"),
+		FromAddr:          msg.GetString("from_addr"),
+		ToAddrs:           msg.GetString("to_addrs"),
+		ReceivedFor:       msg.GetString("received_for"),
+		Folder:            msg.GetString("folder"),
+		Seen:              msg.GetBool("seen"),
+	}
 }

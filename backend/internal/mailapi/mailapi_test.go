@@ -114,6 +114,106 @@ func TestFindContactMessagesNormalizesStoredFromAddress(t *testing.T) {
 	}
 }
 
+func TestFindContactMessagesIgnoresLikeWildcardsInAddress(t *testing.T) {
+	app := newTestMailApp(t)
+	account := newTestAccount(t, app)
+	folder := newTestFolder(t, app, account.Id)
+	for i, from := range []string{"a_b@example.com", "axb@example.com"} {
+		newTestMessage(t, app, account.Id, folder.Id, i+1, map[string]any{
+			"from_addr": from,
+			"date":      "2026-08-13T12:00:00Z",
+		})
+	}
+
+	messages, total, err := findContactMessages(app, "a_b@example.com", 1, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(messages) != 1 {
+		t.Fatalf("underscore address matched %d records (total %d), want 1", len(messages), total)
+	}
+	if got := messages[0].GetString("from_addr"); got != "a_b@example.com" {
+		t.Fatalf("from_addr = %q", got)
+	}
+}
+
+func TestFindThreadIDsKeepsThreadInFolderOfOlderMessage(t *testing.T) {
+	app := newTestMailApp(t)
+	account := newTestAccount(t, app)
+	inbox := newTestFolder(t, app, account.Id)
+	sent := newTestSentFolder(t, app, account.Id)
+	thread := newTestThread(t, app, "threadreplied01", map[string]any{
+		// The reply is newest, so the denormalized thread folder is Sent.
+		"folder":    sent.Id,
+		"last_date": "2026-08-13T13:00:00Z",
+	})
+	newTestMessage(t, app, account.Id, inbox.Id, 1, map[string]any{
+		"thread_id":    thread.Id,
+		"date":         "2026-08-13T12:00:00Z",
+		"received_for": "alias@example.com",
+	})
+	newTestMessage(t, app, account.Id, sent.Id, 2, map[string]any{
+		"thread_id": thread.Id,
+		"date":      "2026-08-13T13:00:00Z",
+	})
+
+	ids, total, err := findThreadIDs(app, inbox.Id, "", 1, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(ids) != 1 || ids[0] != thread.Id {
+		t.Fatalf("inbox listing = %v (total %d), want the replied thread", ids, total)
+	}
+
+	ids, total, err = findThreadIDs(app, sent.Id, "", 1, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(ids) != 1 {
+		t.Fatalf("sent listing = %v (total %d), want the replied thread", ids, total)
+	}
+
+	ids, total, err = findThreadIDs(app, inbox.Id, "alias@example.com", 1, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(ids) != 1 {
+		t.Fatalf("alias listing = %v (total %d), want the replied thread", ids, total)
+	}
+}
+
+func TestFindThreadIDsSkipsThreadsWithoutMessages(t *testing.T) {
+	app := newTestMailApp(t)
+	account := newTestAccount(t, app)
+	inbox := newTestFolder(t, app, account.Id)
+	ghost := newTestThread(t, app, "threadghost0001", map[string]any{
+		"folder":        inbox.Id,
+		"last_date":     "2026-08-13T14:00:00Z",
+		"message_count": 3,
+	})
+	live := newTestThread(t, app, "threadlive00001", map[string]any{
+		"folder":    inbox.Id,
+		"last_date": "2026-08-13T12:00:00Z",
+	})
+	newTestMessage(t, app, account.Id, inbox.Id, 1, map[string]any{
+		"thread_id": live.Id,
+		"date":      "2026-08-13T12:00:00Z",
+	})
+
+	for name, folder := range map[string]string{"folder filter": inbox.Id, "no filter": ""} {
+		ids, total, err := findThreadIDs(app, folder, "", 1, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 1 || len(ids) != 1 || ids[0] != live.Id {
+			t.Fatalf("%s listing = %v (total %d), want only %s", name, ids, total, live.Id)
+		}
+		if ids[0] == ghost.Id {
+			t.Fatalf("%s listed the ghost thread", name)
+		}
+	}
+}
+
 func TestMarkDraftSentRecordsLocalPersistenceWarning(t *testing.T) {
 	app := newTestMailApp(t)
 	account := newTestAccount(t, app)
@@ -215,16 +315,68 @@ func newTestAccount(t *testing.T, app *pocketbase.PocketBase) *core.Record {
 
 func newTestFolder(t *testing.T, app *pocketbase.PocketBase, accountID string) *core.Record {
 	t.Helper()
+	return newTestFolderWithRole(t, app, accountID, "Inbox", "inbox")
+}
+
+func newTestSentFolder(t *testing.T, app *pocketbase.PocketBase, accountID string) *core.Record {
+	t.Helper()
+	return newTestFolderWithRole(t, app, accountID, "Sent", "sent")
+}
+
+func newTestFolderWithRole(t *testing.T, app *pocketbase.PocketBase, accountID, name, role string) *core.Record {
+	t.Helper()
 	folders, err := app.FindCollectionByNameOrId("folders")
 	if err != nil {
 		t.Fatal(err)
 	}
 	folder := core.NewRecord(folders)
 	folder.Set("account", accountID)
-	folder.Set("name", "Inbox")
-	folder.Set("role", "inbox")
+	folder.Set("name", name)
+	folder.Set("role", role)
 	if err := app.Save(folder); err != nil {
 		t.Fatal(err)
 	}
 	return folder
+}
+
+func newTestMessage(
+	t *testing.T,
+	app *pocketbase.PocketBase,
+	accountID, folderID string,
+	uid int,
+	fields map[string]any,
+) *core.Record {
+	t.Helper()
+	messages, err := app.FindCollectionByNameOrId("messages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := core.NewRecord(messages)
+	message.Set("account", accountID)
+	message.Set("folder", folderID)
+	message.Set("uid", uid)
+	for key, value := range fields {
+		message.Set(key, value)
+	}
+	if err := app.Save(message); err != nil {
+		t.Fatal(err)
+	}
+	return message
+}
+
+func newTestThread(t *testing.T, app *pocketbase.PocketBase, id string, fields map[string]any) *core.Record {
+	t.Helper()
+	threads, err := app.FindCollectionByNameOrId("threads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := core.NewRecord(threads)
+	thread.Id = id
+	for key, value := range fields {
+		thread.Set(key, value)
+	}
+	if err := app.Save(thread); err != nil {
+		t.Fatal(err)
+	}
+	return thread
 }

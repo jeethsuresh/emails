@@ -17,6 +17,12 @@ func Register(app core.App) {
 		}
 		return ensureCollections(e.App)
 	})
+	// Metadata repair scales with mailbox size, so it runs in the background
+	// once serving starts instead of delaying bootstrap and the first request.
+	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		StartMailMetaBackfill(e.App)
+		return e.Next()
+	})
 }
 
 func ensureCollections(app core.App) error {
@@ -577,10 +583,7 @@ func ensureMailFeatureSchema(app core.App) error {
 	if err := ensureContactsMailFields(app); err != nil {
 		return err
 	}
-	if err := ensureMailIndexes(app); err != nil {
-		return err
-	}
-	return BackfillMailMeta(app)
+	return ensureMailIndexes(app)
 }
 
 func ensureMessageThreadFields(app core.App) error {

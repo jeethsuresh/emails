@@ -58,32 +58,58 @@ func handleContactMessages(re *core.RequestEvent) error {
 	return re.JSON(200, pageJSON(items, page, perPage, total))
 }
 
+// contactFromMatch matches a normalized address against either a bare
+// from_addr or the angle-bracket form of a display-name address.
+const contactFromMatch = `(
+	LOWER(TRIM(from_addr)) = {:email}
+	OR LOWER(from_addr) LIKE {:bracketed} ESCAPE '\'
+)`
+
 func findContactMessages(app core.App, email string, page, perPage int) ([]*core.Record, int, error) {
 	email = mailmeta.NormalizeEmail(email)
-	candidates, err := app.FindRecordsByFilter(
-		"messages",
-		"from_addr ~ {:email}",
-		"-date",
-		0,
-		0,
-		dbx.Params{"email": email},
-	)
-	if err != nil {
+	if email == "" {
+		return []*core.Record{}, 0, nil
+	}
+	params := dbx.Params{
+		"email":     email,
+		"bracketed": "%<" + likeEscape(email) + ">%",
+		"limit":     perPage,
+		"offset":    (page - 1) * perPage,
+	}
+
+	var count countRow
+	if err := app.DB().NewQuery(
+		`SELECT COUNT(*) AS total FROM messages WHERE ` + contactFromMatch,
+	).Bind(params).One(&count); err != nil {
 		return nil, 0, err
 	}
-	matches := make([]*core.Record, 0, len(candidates))
-	for _, record := range candidates {
-		if mailmeta.NormalizeEmail(record.GetString("from_addr")) == email {
-			matches = append(matches, record)
+
+	// Page over ids in SQL so only the requested page of bodies is hydrated.
+	var rows []idRow
+	if err := app.DB().NewQuery(`
+		SELECT id FROM messages
+		WHERE ` + contactFromMatch + `
+		ORDER BY date DESC, id DESC
+		LIMIT {:limit} OFFSET {:offset}`,
+	).Bind(params).All(&rows); err != nil {
+		return nil, 0, err
+	}
+
+	records := make([]*core.Record, 0, len(rows))
+	for _, row := range rows {
+		record, err := app.FindRecordById("messages", row.ID)
+		if err != nil {
+			continue
 		}
+		records = append(records, record)
 	}
-	total := len(matches)
-	start := (page - 1) * perPage
-	if start >= total {
-		return []*core.Record{}, total, nil
-	}
-	end := min(start+perPage, total)
-	return matches[start:end], total, nil
+	return records, count.Total, nil
+}
+
+func likeEscape(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, "%", `\%`)
+	return strings.ReplaceAll(value, "_", `\_`)
 }
 
 func contactJSON(record *core.Record) map[string]any {

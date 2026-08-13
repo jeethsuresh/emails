@@ -9,6 +9,10 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
+// maxThreadMessages bounds a single thread payload so a runaway thread cannot
+// pull unlimited full message bodies into memory.
+const maxThreadMessages = 500
+
 type idRow struct {
 	ID string `db:"id"`
 }
@@ -19,13 +23,37 @@ type countRow struct {
 
 func handleListThreads(re *core.RequestEvent) error {
 	query := re.Request.URL.Query()
-	folder := strings.TrimSpace(query.Get("folder"))
-	receivedFor := strings.ToLower(strings.TrimSpace(query.Get("received_for")))
 	page, perPage := pagination(query.Get("page"), query.Get("perPage"))
-	offset := (page - 1) * perPage
+	ids, total, err := findThreadIDs(
+		re.App,
+		strings.TrimSpace(query.Get("folder")),
+		strings.ToLower(strings.TrimSpace(query.Get("received_for"))),
+		page,
+		perPage,
+	)
+	if err != nil {
+		return re.InternalServerError("list threads", err)
+	}
 
+	items := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		record, err := re.App.FindRecordById("threads", id)
+		if err != nil {
+			continue
+		}
+		items = append(items, threadJSON(record))
+	}
+	return re.JSON(200, pageJSON(items, page, perPage, total))
+}
+
+// findThreadIDs pages thread ids newest-first. Membership is decided by the
+// thread's messages, never by the denormalized threads.folder: a thread must
+// stay in Inbox while any Inbox message exists, even after a reply makes the
+// newest message a Sent one. The unfiltered EXISTS also keeps threads whose
+// messages have all moved away out of every listing.
+func findThreadIDs(app core.App, folder, receivedFor string, page, perPage int) ([]string, int, error) {
 	where := "1 = 1"
-	params := dbx.Params{"limit": perPage, "offset": offset}
+	params := dbx.Params{"limit": perPage, "offset": (page - 1) * perPage}
 	if folder != "" {
 		where += " AND m.folder = {:folder}"
 		params["folder"] = folder
@@ -34,55 +62,33 @@ func handleListThreads(re *core.RequestEvent) error {
 		where += " AND m.received_for = {:received_for}"
 		params["received_for"] = receivedFor
 	}
+	exists := `EXISTS (
+		SELECT 1 FROM messages m
+		WHERE m.thread_id = t.id AND ` + where + `
+	)`
 
 	var rows []idRow
+	if err := app.DB().NewQuery(`
+		SELECT t.id
+		FROM threads t
+		WHERE `+exists+`
+		ORDER BY t.last_date DESC
+		LIMIT {:limit} OFFSET {:offset}`,
+	).Bind(params).All(&rows); err != nil {
+		return nil, 0, err
+	}
 	var count countRow
-	if receivedFor != "" {
-		sql := `
-			SELECT t.id
-			FROM threads t
-			WHERE EXISTS (
-				SELECT 1 FROM messages m
-				WHERE m.thread_id = t.id AND ` + where + `
-			)
-			ORDER BY t.last_date DESC
-			LIMIT {:limit} OFFSET {:offset}`
-		if err := re.App.DB().NewQuery(sql).Bind(params).All(&rows); err != nil {
-			return re.InternalServerError("list threads", err)
-		}
-		countSQL := `
-			SELECT COUNT(*) AS total
-			FROM threads t
-			WHERE EXISTS (
-				SELECT 1 FROM messages m
-				WHERE m.thread_id = t.id AND ` + where + `
-			)`
-		if err := re.App.DB().NewQuery(countSQL).Bind(params).One(&count); err != nil {
-			return re.InternalServerError("count threads", err)
-		}
-	} else {
-		where = "1 = 1"
-		if folder != "" {
-			where += " AND folder = {:folder}"
-		}
-		sql := `SELECT id FROM threads WHERE ` + where + ` ORDER BY last_date DESC LIMIT {:limit} OFFSET {:offset}`
-		if err := re.App.DB().NewQuery(sql).Bind(params).All(&rows); err != nil {
-			return re.InternalServerError("list threads", err)
-		}
-		if err := re.App.DB().NewQuery(`SELECT COUNT(*) AS total FROM threads WHERE ` + where).Bind(params).One(&count); err != nil {
-			return re.InternalServerError("count threads", err)
-		}
+	if err := app.DB().NewQuery(
+		`SELECT COUNT(*) AS total FROM threads t WHERE ` + exists,
+	).Bind(params).One(&count); err != nil {
+		return nil, 0, err
 	}
 
-	items := make([]map[string]any, 0, len(rows))
+	ids := make([]string, 0, len(rows))
 	for _, row := range rows {
-		record, err := re.App.FindRecordById("threads", row.ID)
-		if err != nil {
-			continue
-		}
-		items = append(items, threadJSON(record))
+		ids = append(ids, row.ID)
 	}
-	return re.JSON(200, pageJSON(items, page, perPage, count.Total))
+	return ids, count.Total, nil
 }
 
 func handleGetThread(re *core.RequestEvent) error {
@@ -91,11 +97,13 @@ func handleGetThread(re *core.RequestEvent) error {
 	if err != nil {
 		return re.NotFoundError("thread not found", err)
 	}
+	// Newest-first with a cap, then reversed: an oversized thread keeps its
+	// latest replies instead of stopping 500 messages into the past.
 	messages, err := re.App.FindRecordsByFilter(
 		"messages",
 		"thread_id = {:thread}",
-		"date",
-		0,
+		"-date",
+		maxThreadMessages,
 		0,
 		dbx.Params{"thread": id},
 	)
@@ -103,8 +111,8 @@ func handleGetThread(re *core.RequestEvent) error {
 		return re.InternalServerError("load thread messages", err)
 	}
 	messageItems := make([]map[string]any, 0, len(messages))
-	for _, message := range messages {
-		messageItems = append(messageItems, messageJSON(message))
+	for i := len(messages) - 1; i >= 0; i-- {
+		messageItems = append(messageItems, messageJSON(messages[i]))
 	}
 	return re.JSON(200, map[string]any{
 		"thread":   threadJSON(thread),

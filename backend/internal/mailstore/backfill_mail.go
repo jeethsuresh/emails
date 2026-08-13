@@ -2,6 +2,7 @@ package mailstore
 
 import (
 	"fmt"
+	"log"
 
 	"email.local/backend/internal/mailmeta"
 
@@ -9,6 +10,23 @@ import (
 )
 
 const mailMetaBackfillBatchSize = 100
+
+// StartMailMetaBackfill repairs thread/contact metadata for already-stored
+// messages in the background. Bootstrap must not block on it: the work scales
+// with mailbox size, and every request (including the first) is served by the
+// same process that runs it.
+func StartMailMetaBackfill(app core.App) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("mail meta backfill panicked: %v", r)
+			}
+		}()
+		if err := BackfillMailMeta(app); err != nil {
+			log.Printf("mail meta backfill failed: %v", err)
+		}
+	}()
+}
 
 func BackfillMailMeta(app core.App) error {
 	accounts, err := app.FindAllRecords("accounts")

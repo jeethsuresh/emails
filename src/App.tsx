@@ -82,6 +82,7 @@ export function App() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [composePrefill, setComposePrefill] = useState<ComposePrefill>();
   const [aliases, setAliases] = useState<string[]>([]);
+  const [accountEmails, setAccountEmails] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -210,8 +211,11 @@ export function App() {
       return;
     }
     try {
-      const accounts = await pb.collection("accounts").getList(1, 1);
+      const accounts = await pb
+        .collection("accounts")
+        .getList<{ id: string; email: string }>(1, 50, { fields: "id,email" });
       setHasAccount(accounts.totalItems > 0);
+      setAccountEmails(accounts.items.map((account) => account.email).filter(Boolean));
       if (accounts.totalItems === 0) {
         setFolders([]);
         resetMessageList();
@@ -311,6 +315,13 @@ export function App() {
       cancelled = true;
     };
   }, [hasAccount, pb]);
+
+  // Account addresses are always valid senders; aliases only appear once mail
+  // has arrived for them, so From must not depend on the alias list.
+  const fromOptions = useMemo(
+    () => [...new Set([...accountEmails, ...aliases].filter(Boolean))],
+    [accountEmails, aliases],
+  );
 
   useEffect(() => {
     if (!selectedMessage) return;
@@ -556,7 +567,7 @@ export function App() {
         <ComposeModal
           pb={pb}
           prefill={composePrefill}
-          aliases={aliases}
+          fromOptions={fromOptions}
           onClose={() => {
             setComposeOpen(false);
             setComposePrefill(undefined);

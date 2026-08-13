@@ -8,19 +8,20 @@ export function ComposeModal({
   onSaved,
   onSent,
   prefill,
-  aliases = [],
+  fromOptions = [],
 }: {
   pb: PocketBase;
   onClose: () => void;
   onSaved: () => void;
   onSent?: () => void;
   prefill?: ComposePrefill;
-  aliases?: string[];
+  /** Account addresses plus discovered aliases, in preference order. */
+  fromOptions?: string[];
 }) {
-  const fromOptions = Array.from(
-    new Set([prefill?.from ?? "", ...aliases].filter(Boolean)),
+  const senderOptions = Array.from(
+    new Set([prefill?.from ?? "", ...fromOptions].filter(Boolean)),
   );
-  const firstFrom = fromOptions[0] ?? "";
+  const firstFrom = senderOptions[0] ?? "";
   const [from, setFrom] = useState(prefill?.from ?? firstFrom);
   const [to, setTo] = useState(prefill?.to.join(", ") ?? "");
   const [subject, setSubject] = useState(prefill?.subject ?? "");
@@ -101,14 +102,25 @@ export function ComposeModal({
         <h2>Compose</h2>
         <label>
           From
-          <select value={from} onChange={(e) => setFrom(e.target.value)} required>
-            {fromOptions.length === 0 ? <option value="">No sending addresses</option> : null}
-            {fromOptions.map((address) => (
-              <option key={address} value={address}>
-                {address}
-              </option>
-            ))}
-          </select>
+          {senderOptions.length > 0 ? (
+            <select value={from} onChange={(e) => setFrom(e.target.value)} required>
+              {senderOptions.map((address) => (
+                <option key={address} value={address}>
+                  {address}
+                </option>
+              ))}
+            </select>
+          ) : (
+            // Accounts may still be loading; let the user type rather than
+            // dead-end on an empty picker.
+            <input
+              type="email"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              placeholder="you@example.com"
+              required
+            />
+          )}
         </label>
         <label>
           To
@@ -127,10 +139,10 @@ export function ComposeModal({
           <button type="button" onClick={onClose}>
             Cancel
           </button>
-          <button type="button" disabled={busy || !from} onClick={() => runAction("save")}>
+          <button type="button" disabled={busy || !from.trim()} onClick={() => runAction("save")}>
             Save draft
           </button>
-          <button type="submit" disabled={busy || !from}>
+          <button type="submit" disabled={busy}>
             {busy ? "Working…" : "Send"}
           </button>
         </div>

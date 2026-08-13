@@ -858,15 +858,6 @@ func ingestBuffer(app core.App, accountID, accountEmail, folderID string, buf *i
 	}
 
 	uid := buf.UID
-	rec, err := app.FindFirstRecordByFilter(col, "folder = {:f} && uid = {:u}", dbx.Params{"f": folderID, "u": float64(uid)})
-	created := err != nil
-	if err != nil {
-		rec = core.NewRecord(col)
-		rec.Set("folder", folderID)
-		rec.Set("account", accountID)
-		rec.Set("uid", float64(uid))
-	}
-
 	subject := ""
 	fromAddr := ""
 	toAddrs := ""
@@ -971,6 +962,9 @@ func ingestBuffer(app core.App, accountID, accountEmail, folderID string, buf *i
 		}
 	}
 
+	rec, created := findOrCreateMessage(app, col, accountID, folderID, uid, messageID)
+	previousThreadID := strings.TrimSpace(rec.GetString("thread_id"))
+
 	rec.Set("subject", subject)
 	rec.Set("from_addr", host.NormalizeContact(fromAddr))
 	rec.Set("to_addrs", toAddrs)
@@ -1000,10 +994,63 @@ func ingestBuffer(app core.App, accountID, accountEmail, folderID string, buf *i
 	if err := app.Save(rec); err != nil {
 		return fmt.Errorf("save message uid=%d: %w", uid, err)
 	}
+	if next := strings.TrimSpace(rec.GetString("thread_id")); previousThreadID != "" && previousThreadID != next {
+		if err := mailmeta.RecountThread(app, previousThreadID); err != nil {
+			logProgress("  uid %d: recount old thread failed: %v", uid, err)
+		}
+	}
 	_ = mailmeta.UpsertThreadFromMessage(app, rec)
 	_ = mailmeta.UpsertContactFromMessage(app, rec, created)
 	enqueueIfBodied(app, rec)
 	return nil
+}
+
+// findOrCreateMessage resolves the row a fetched message belongs to. (folder,
+// uid) is the natural key, but a message sent from this app is persisted with a
+// synthetic uid before the server copy exists; adopting that placeholder by
+// Message-ID keeps Sent from showing the same message twice. A genuine copy of
+// the same Message-ID in a different folder is left alone.
+func findOrCreateMessage(
+	app core.App,
+	col *core.Collection,
+	accountID, folderID string,
+	uid imap.UID,
+	messageID string,
+) (*core.Record, bool) {
+	rec, err := app.FindFirstRecordByFilter(col, "folder = {:f} && uid = {:u}", dbx.Params{"f": folderID, "u": float64(uid)})
+	if err == nil {
+		return rec, false
+	}
+	if bare := mailmeta.NormalizeMessageID(messageID); bare != "" {
+		existing, err := app.FindRecordsByFilter(
+			col,
+			"account = {:account} && (message_id = {:raw} || message_id = {:bare} || message_id = {:bracketed})",
+			"uid",
+			0,
+			0,
+			dbx.Params{
+				"account":   accountID,
+				"raw":       strings.TrimSpace(messageID),
+				"bare":      bare,
+				"bracketed": "<" + bare + ">",
+			},
+		)
+		if err == nil {
+			for _, candidate := range existing {
+				if candidate.GetFloat("uid") > 0 && candidate.GetString("folder") != folderID {
+					continue
+				}
+				candidate.Set("folder", folderID)
+				candidate.Set("uid", float64(uid))
+				return candidate, false
+			}
+		}
+	}
+	rec = core.NewRecord(col)
+	rec.Set("folder", folderID)
+	rec.Set("account", accountID)
+	rec.Set("uid", float64(uid))
+	return rec, true
 }
 
 func enqueueIfBodied(app core.App, rec *core.Record) {

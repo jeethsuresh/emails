@@ -78,30 +78,34 @@ func handleSend(re *core.RequestEvent) error {
 		return re.InternalServerError("send email", err)
 	}
 
-	sentMessage, err := persistSentMessage(re.App, account, request, messageID)
-	if err != nil {
-		markDraftFailed(re.App, draft, err)
-		return re.InternalServerError("persist sent email", err)
+	threadID := strings.TrimSpace(request.ThreadID)
+	warning := ""
+	sentMessage, persistErr := persistSentMessage(re.App, account, request, messageID)
+	if persistErr != nil {
+		warning = "local persist failed: " + persistErr.Error()
+	} else {
+		threadID = sentMessage.GetString("thread_id")
 	}
 	if draft != nil {
-		now := time.Now().UTC().Format(time.RFC3339)
-		draft.Set("status", "sent")
-		draft.Set("last_error", "")
-		draft.Set("sent_at", now)
-		draft.Set("message_id", messageID)
-		draft.Set("thread_id", sentMessage.GetString("thread_id"))
-		if err := re.App.Save(draft); err != nil {
-			return re.InternalServerError("mark draft sent", err)
+		if err := markDraftSent(re.App, draft, messageID, threadID, warning); err != nil {
+			if warning != "" {
+				warning += "; "
+			}
+			warning += "local draft update failed: " + err.Error()
 		}
 	}
 
 	// IMAP APPEND is intentionally deferred in v1. The local Sent row keeps the
 	// offline UI and thread materialization consistent after successful SMTP.
-	return re.JSON(200, map[string]any{
+	response := map[string]any{
 		"ok":        true,
 		"messageId": messageID,
-		"threadId":  sentMessage.GetString("thread_id"),
-	})
+		"threadId":  threadID,
+	}
+	if warning != "" {
+		response["warning"] = warning
+	}
+	return re.JSON(200, response)
 }
 
 func findSendAccount(app core.App, from string) (*core.Record, error) {
@@ -165,6 +169,18 @@ func markDraftFailed(app core.App, draft *core.Record, failure error) {
 	draft.Set("status", "failed")
 	draft.Set("last_error", failure.Error())
 	_ = app.Save(draft)
+}
+
+func markDraftSent(app core.App, draft *core.Record, messageID, threadID, warning string) error {
+	if draft == nil {
+		return nil
+	}
+	draft.Set("status", "sent")
+	draft.Set("last_error", warning)
+	draft.Set("sent_at", time.Now().UTC().Format(time.RFC3339))
+	draft.Set("message_id", messageID)
+	draft.Set("thread_id", threadID)
+	return app.Save(draft)
 }
 
 func persistSentMessage(app core.App, account *core.Record, request sendRequest, messageID string) (*core.Record, error) {

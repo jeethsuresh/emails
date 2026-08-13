@@ -3,6 +3,8 @@ package mailapi
 import (
 	"strings"
 
+	"email.local/backend/internal/mailmeta"
+
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -45,29 +47,43 @@ func handleContactMessages(re *core.RequestEvent) error {
 	}
 	query := re.Request.URL.Query()
 	page, perPage := pagination(query.Get("page"), query.Get("perPage"))
-	params := dbx.Params{"email": email}
-	records, err := re.App.FindRecordsByFilter(
-		"messages",
-		"from_addr = {:email}",
-		"-date",
-		perPage,
-		(page-1)*perPage,
-		params,
-	)
+	records, total, err := findContactMessages(re.App, email, page, perPage)
 	if err != nil {
 		return re.InternalServerError("list contact messages", err)
-	}
-	var count countRow
-	if err := re.App.DB().NewQuery(
-		"SELECT COUNT(*) AS total FROM messages WHERE from_addr = {:email}",
-	).Bind(params).One(&count); err != nil {
-		return re.InternalServerError("count contact messages", err)
 	}
 	items := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		items = append(items, messageJSON(record))
 	}
-	return re.JSON(200, pageJSON(items, page, perPage, count.Total))
+	return re.JSON(200, pageJSON(items, page, perPage, total))
+}
+
+func findContactMessages(app core.App, email string, page, perPage int) ([]*core.Record, int, error) {
+	email = mailmeta.NormalizeEmail(email)
+	candidates, err := app.FindRecordsByFilter(
+		"messages",
+		"from_addr ~ {:email}",
+		"-date",
+		0,
+		0,
+		dbx.Params{"email": email},
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	matches := make([]*core.Record, 0, len(candidates))
+	for _, record := range candidates {
+		if mailmeta.NormalizeEmail(record.GetString("from_addr")) == email {
+			matches = append(matches, record)
+		}
+	}
+	total := len(matches)
+	start := (page - 1) * perPage
+	if start >= total {
+		return []*core.Record{}, total, nil
+	}
+	end := min(start+perPage, total)
+	return matches[start:end], total, nil
 }
 
 func contactJSON(record *core.Record) map[string]any {

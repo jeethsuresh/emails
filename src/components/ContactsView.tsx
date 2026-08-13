@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type PocketBase from "pocketbase";
 import { decodeMIMEWords } from "../lib/mimeWords";
 import {
@@ -18,46 +18,73 @@ export function ContactsView({
   onSelectMessage: (message: ThreadMessage) => void;
 }) {
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contactsTotal, setContactsTotal] = useState(0);
+  const [contactsPage, setContactsPage] = useState(1);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
+  const [messagesTotal, setMessagesTotal] = useState(0);
+  const [messagesPage, setMessagesPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const requestSeq = useRef(0);
+  const contactsRequestSeq = useRef(0);
+  const messagesRequestSeq = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    void listContacts(pb)
-      .then((result) => {
-        if (!cancelled) setContacts(result.items);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [pb]);
-
-  const selectContact = async (contact: Contact) => {
-    const seq = ++requestSeq.current;
-    setSelectedContact(contact);
-    setMessages([]);
+  const loadContacts = useCallback(async (nextPage: number, append: boolean) => {
+    const seq = ++contactsRequestSeq.current;
     setLoading(true);
     setError(null);
     try {
-      const result = await contactMessages(pb, contact.email);
-      if (requestSeq.current === seq) setMessages(result.items);
+      const result = await listContacts(pb, undefined, nextPage);
+      if (seq !== contactsRequestSeq.current) return;
+      setContacts((current) => (append ? [...current, ...result.items] : result.items));
+      setContactsTotal(result.totalItems);
+      setContactsPage(result.page);
     } catch (err) {
-      if (requestSeq.current === seq) {
+      if (seq === contactsRequestSeq.current) {
         setError(err instanceof Error ? err.message : String(err));
       }
     } finally {
-      if (requestSeq.current === seq) setLoading(false);
+      if (seq === contactsRequestSeq.current) setLoading(false);
     }
+  }, [pb]);
+
+  useEffect(() => {
+    void loadContacts(1, false);
+    return () => {
+      contactsRequestSeq.current += 1;
+      messagesRequestSeq.current += 1;
+    };
+  }, [loadContacts]);
+
+  const loadContactMessages = async (
+    contact: Contact,
+    nextPage: number,
+    append: boolean,
+  ) => {
+    const seq = ++messagesRequestSeq.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await contactMessages(pb, contact.email, nextPage);
+      if (messagesRequestSeq.current !== seq) return;
+      setMessages((current) => (append ? [...current, ...result.items] : result.items));
+      setMessagesTotal(result.totalItems);
+      setMessagesPage(result.page);
+    } catch (err) {
+      if (messagesRequestSeq.current === seq) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      if (messagesRequestSeq.current === seq) setLoading(false);
+    }
+  };
+
+  const selectContact = (contact: Contact) => {
+    setSelectedContact(contact);
+    setMessages([]);
+    setMessagesTotal(0);
+    setMessagesPage(1);
+    void loadContactMessages(contact, 1, false);
   };
 
   return (
@@ -68,9 +95,12 @@ export function ContactsView({
             type="button"
             className="contacts-back"
             onClick={() => {
-              requestSeq.current += 1;
+              messagesRequestSeq.current += 1;
               setSelectedContact(null);
               setMessages([]);
+              setMessagesTotal(0);
+              setMessagesPage(1);
+              setLoading(false);
               setError(null);
             }}
           >
@@ -79,8 +109,8 @@ export function ContactsView({
         ) : (
           "Contacts"
         )}
-        {!selectedContact && contacts.length > 0 ? (
-          <span className="count">{contacts.length}</span>
+        {!selectedContact && contactsTotal > 0 ? (
+          <span className="count">{contactsTotal}</span>
         ) : null}
         {loading ? <span className="count">Loading…</span> : null}
       </h2>
@@ -99,7 +129,7 @@ export function ContactsView({
             <ul className="contact-list">
               {contacts.map((contact) => (
                 <li key={contact.id}>
-                  <button type="button" className="row" onClick={() => void selectContact(contact)}>
+                  <button type="button" className="row" onClick={() => selectContact(contact)}>
                     <div className="meta">
                       <strong className="clamp-2">{contact.display_name || contact.email}</strong>
                       <span>{contact.message_count}</span>
@@ -137,6 +167,28 @@ export function ContactsView({
             ))}
           </ul>
         )}
+        {!selectedContact && contacts.length < contactsTotal ? (
+          <button
+            type="button"
+            className="load-more"
+            disabled={loading}
+            onClick={() => void loadContacts(contactsPage + 1, true)}
+          >
+            {loading ? "Loading…" : "Load more contacts"}
+          </button>
+        ) : null}
+        {selectedContact && messages.length < messagesTotal ? (
+          <button
+            type="button"
+            className="load-more"
+            disabled={loading}
+            onClick={() =>
+              void loadContactMessages(selectedContact, messagesPage + 1, true)
+            }
+          >
+            {loading ? "Loading…" : "Load more messages"}
+          </button>
+        ) : null}
       </div>
     </section>
   );

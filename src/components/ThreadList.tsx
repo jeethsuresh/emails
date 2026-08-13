@@ -30,6 +30,7 @@ export function ThreadList({
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const loadSeq = useRef(0);
+  const openSeq = useRef(0);
 
   const load = useCallback(
     async (nextPage: number, append: boolean) => {
@@ -66,16 +67,27 @@ export function ThreadList({
     void load(1, false);
   }, [load, refreshKey]);
 
+  useEffect(() => {
+    openSeq.current += 1;
+    setOpeningId(null);
+    return () => {
+      openSeq.current += 1;
+    };
+  }, [folder, receivedFor, refreshKey]);
+
   const openThread = async (thread: MailThread) => {
+    const seq = ++openSeq.current;
     setOpeningId(thread.id);
     setError(null);
     try {
       const result = await getThread(pb, thread.id);
-      onOpenThread(result.thread, result.messages);
+      if (seq === openSeq.current) onOpenThread(result.thread, result.messages);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (seq === openSeq.current) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setOpeningId(null);
+      if (seq === openSeq.current) setOpeningId(null);
     }
   };
 

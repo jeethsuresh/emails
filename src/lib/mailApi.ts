@@ -102,9 +102,11 @@ export async function getThread(
 export async function listContacts(
   pb: PocketBase,
   q?: string,
+  page?: number,
 ): Promise<Page<Contact>> {
   const query = new URLSearchParams();
   if (q) query.set("q", q);
+  if (page) query.set("page", String(page));
   const suffix = query.size > 0 ? `?${query}` : "";
   return pb.send<Page<Contact>>(`/api/email/contacts${suffix}`, { method: "GET" });
 }

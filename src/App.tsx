@@ -41,6 +41,24 @@ interface Folder {
 
 type Message = ListMessage;
 
+async function fetchMissingMessageBody<T extends Message>(message: T): Promise<T> {
+  if (message.body_text?.trim() || message.body_html?.trim()) return message;
+
+  const res = await window.email.fetchMessageBody(message.id);
+  const text = new TextDecoder().decode(new Uint8Array(res.body));
+  const data = JSON.parse(text) as {
+    body_text?: string;
+    body_html?: string;
+    snippet?: string;
+  };
+  return {
+    ...message,
+    body_text: data.body_text ?? "",
+    body_html: data.body_html ?? "",
+    snippet: data.snippet ?? message.snippet,
+  };
+}
+
 function escapeFilterValue(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
@@ -77,6 +95,7 @@ export function App() {
   const slotsRef = useRef<Array<Message | null>>([]);
   const visibleIdsRef = useRef<string[]>([]);
   const loadSeqRef = useRef(0);
+  const selectionSeqRef = useRef(0);
   const loadedPagesRef = useRef<Set<number>>(new Set());
   const inflightPagesRef = useRef<Set<number>>(new Set());
   slotsRef.current = slots;
@@ -313,9 +332,11 @@ export function App() {
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
+      selectionSeqRef.current += 1;
       setSelectedThread(null);
       setThreadMessages([]);
       setSelectedMessage(null);
+      setLoadingBody(false);
       if (query.trim()) {
         void reloadList(selectedFolderRef.current, query);
       } else {
@@ -360,60 +381,65 @@ export function App() {
     selectedFolderRef.current = id;
     queryRef.current = "";
     setSelectedFolder(id);
-    setSelectedMessage(null);
-    setSelectedThread(null);
-    setThreadMessages([]);
+    clearMailSelection();
     setQuery("");
     resetMessageList();
   };
 
   const selectMessage = async (m: Message) => {
+    const seq = ++selectionSeqRef.current;
     setSelectedThread(null);
     setThreadMessages([]);
     setSelectedMessage(m);
     setLoadingBody(true);
     try {
       const full = await pb.collection("messages").getOne<Message>(m.id);
-      let next = full;
-      if (!full.body_text?.trim() && !full.body_html?.trim()) {
-        const res = await window.email.fetchMessageBody(m.id);
-        const text = new TextDecoder().decode(new Uint8Array(res.body));
-        const data = JSON.parse(text) as {
-          body_text?: string;
-          body_html?: string;
-          snippet?: string;
-        };
-        next = {
-          ...full,
-          body_text: data.body_text ?? "",
-          body_html: data.body_html ?? "",
-          snippet: data.snippet ?? full.snippet,
-        };
-      }
-      setSelectedMessage(next);
+      const next = await fetchMissingMessageBody(full);
+      if (seq === selectionSeqRef.current) setSelectedMessage(next);
     } catch (err) {
-      console.error("selectMessage failed", err);
+      if (seq === selectionSeqRef.current) console.error("selectMessage failed", err);
     } finally {
-      setLoadingBody(false);
+      if (seq === selectionSeqRef.current) setLoadingBody(false);
     }
   };
 
-  const selectLoadedMessage = (message: ThreadMessage) => {
+  const selectLoadedMessage = async (message: ThreadMessage) => {
+    const seq = ++selectionSeqRef.current;
     setSelectedMessage(message);
-    setLoadingBody(false);
+    setLoadingBody(true);
+    try {
+      const next = await fetchMissingMessageBody(message);
+      if (seq !== selectionSeqRef.current) return;
+      setSelectedMessage(next);
+      setThreadMessages((current) =>
+        current.map((item) => (item.id === next.id ? { ...item, ...next } : item)),
+      );
+    } catch (err) {
+      if (seq === selectionSeqRef.current) console.error("selectLoadedMessage failed", err);
+    } finally {
+      if (seq === selectionSeqRef.current) setLoadingBody(false);
+    }
   };
 
   const openThread = (thread: MailThread, messages: ThreadMessage[]) => {
     setSelectedThread(thread);
     setThreadMessages(messages);
-    setSelectedMessage(messages.at(-1) ?? null);
-    setLoadingBody(false);
+    const newest = messages.at(-1);
+    if (newest) {
+      void selectLoadedMessage(newest);
+    } else {
+      selectionSeqRef.current += 1;
+      setSelectedMessage(null);
+      setLoadingBody(false);
+    }
   };
 
   const clearMailSelection = () => {
+    selectionSeqRef.current += 1;
     setSelectedMessage(null);
     setSelectedThread(null);
     setThreadMessages([]);
+    setLoadingBody(false);
   };
 
   const refreshCurrentList = () => {

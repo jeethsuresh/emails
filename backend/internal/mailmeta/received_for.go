@@ -4,8 +4,8 @@ import "strings"
 
 func ReceivedFor(headers map[string]string, toAddrs, ccAddrs, accountEmail string) string {
 	for _, key := range []string{"Delivered-To", "X-Original-To", "X-Delivered-To", "Envelope-To"} {
-		if v := NormalizeEmail(headerGet(headers, key)); v != "" {
-			return v
+		if addrs := ParseAddressList(headerGet(headers, key)); len(addrs) > 0 {
+			return addrs[0]
 		}
 	}
 	domain := DomainOf(accountEmail)

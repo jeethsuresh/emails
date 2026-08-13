@@ -2,19 +2,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { decodeMIMEWords } from "../lib/mimeWords";
 import { priorityLabel } from "../lib/analysis";
 import type { MessageAnalysis } from "../../shared/types";
+import type { ListMessage } from "../lib/messageCache";
 
-interface Message {
-  id: string;
-  subject: string;
-  from_addr: string;
-  date: string;
-  snippet: string;
-  seen: boolean;
-  flagged: boolean;
-}
-
-/** Fixed row height keeps virtualization cheap and stable. */
-const ROW_HEIGHT = 96;
+/** Fixed row height keeps virtualization cheap and stable (allows ~2–3 line clamps). */
+const ROW_HEIGHT = 108;
 const OVERSCAN = 10;
 
 function idsKey(ids: string[]): string {
@@ -35,14 +26,14 @@ export function MessageList({
   analysisByMessage = {},
 }: {
   /** Sparse list: null = not loaded yet. Length should match totalCount. */
-  slots: Array<Message | null>;
+  slots: Array<ListMessage | null>;
   selectedId: string | null;
   totalCount: number;
   loading?: boolean;
   listKey?: string;
-  onSelect: (m: Message) => void;
-  onToggleFlag: (m: Message) => void;
-  onToggleSeen: (m: Message) => void;
+  onSelect: (m: ListMessage) => void;
+  onToggleFlag: (m: ListMessage) => void;
+  onToggleSeen: (m: ListMessage) => void;
   onVisibleRange?: (start: number, end: number, ids: string[]) => void;
   emptyLabel?: string;
   analysisByMessage?: Record<string, MessageAnalysis>;
@@ -128,18 +119,18 @@ export function MessageList({
                   >
                     <button type="button" className="row" onClick={() => onSelect(m)}>
                       <div className="meta">
-                        <strong className={m.seen ? "" : "unread"}>
+                        <strong className={`clamp-2 ${m.seen ? "" : "unread"}`}>
                           {m.from_addr || "(unknown)"}
                         </strong>
                         <time>{m.date ? new Date(m.date).toLocaleString() : ""}</time>
                       </div>
-                      <div className="subject">
+                      <div className="subject clamp-2">
                         {label ? (
                           <span className={`priority-tag priority-${priority}`}>{label}</span>
                         ) : null}
                         {decodeMIMEWords(m.subject) || "(no subject)"}
                       </div>
-                      <div className="snippet">{decodeMIMEWords(m.snippet)}</div>
+                      <div className="snippet clamp-2">{decodeMIMEWords(m.snippet)}</div>
                     </button>
                     <div className="actions">
                       <button type="button" onClick={() => onToggleFlag(m)}>

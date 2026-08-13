@@ -18,11 +18,19 @@ import {
   type EventWriteInput,
   type WindowEvent,
 } from "../lib/calendarApi";
+import { useViewport } from "../lib/viewport";
 
 const HOUR_HEIGHT = 48;
 
 export function CalendarView({ pb, active }: { pb: PocketBase; active: boolean }) {
-  const [mode, setMode] = useState<CalendarViewMode>("multi");
+  const viewport = useViewport();
+  const [mode, setMode] = useState<CalendarViewMode>(() =>
+    typeof window !== "undefined" && window.innerWidth < 640 ? "day" : "multi",
+  );
+
+  useEffect(() => {
+    if (viewport === "phone" && mode === "multi") setMode("day");
+  }, [viewport, mode]);
   const [multiDays, setMultiDays] = useState(7);
   const [anchor, setAnchor] = useState(todayAnchorLocal);
   const [displayTimezone, setDisplayTimezone] = useState("");
@@ -396,10 +404,10 @@ function CalendarList({
                       className="cal-swatch"
                       style={{ background: resolveCalendarColor(ev.calendarColor) }}
                     />
-                    <strong>
-                      {draft ? <span className="draft-tag">Draft</span> : null}
-                      {ev.title || "(untitled)"}
-                    </strong>
+                  <strong className="clamp-2">
+                    {draft ? <span className="draft-tag">Draft</span> : null}
+                    {ev.title || "(untitled)"}
+                  </strong>
                     <span className="muted">
                       {ev.allDay
                         ? "All day"
@@ -454,7 +462,7 @@ function TimeGrid({
               <button
                 key={ev.id}
                 type="button"
-                className={ev.status === "draft" ? "cal-chip draft" : "cal-chip"}
+                className={ev.status === "draft" ? "cal-chip draft clamp-2" : "cal-chip clamp-2"}
                 style={{ borderLeftColor: resolveCalendarColor(ev.calendarColor), background: soft(resolveCalendarColor(ev.calendarColor)) }}
                 onClick={() => onEventClick(ev)}
               >
@@ -511,7 +519,7 @@ function TimeGrid({
                     onEventClick(ev);
                   }}
                 >
-                  <strong>{ev.title || "(untitled)"}</strong>
+                  <strong className="clamp-2">{ev.title || "(untitled)"}</strong>
                   <span>
                     {formatDisplayTime(ev.displayStart)}–{formatDisplayTime(ev.displayEnd)}
                   </span>
@@ -572,8 +580,11 @@ function MonthGrid({
               {list.slice(0, 3).map((ev) => (
                 <span
                   key={ev.id}
-                  className="cal-chip tight"
-                  style={{ borderLeftColor: ev.calendarColor, background: soft(ev.calendarColor) }}
+                  className="cal-chip tight clamp-2"
+                  style={{
+                    borderLeftColor: resolveCalendarColor(ev.calendarColor),
+                    background: soft(resolveCalendarColor(ev.calendarColor)),
+                  }}
                   onClick={(e) => {
                     e.stopPropagation();
                     onSelectEvent(ev);

@@ -34,8 +34,8 @@ export function FolderList({
                 className={selected === f.id ? "active" : ""}
                 onClick={() => onSelect(f.id)}
               >
-                <span>{f.name}</span>
-                <em>{f.role}</em>
+                <span className="clamp-2">{f.name}</span>
+                <em className="clamp-2">{f.role}</em>
               </button>
             </li>
           ))}

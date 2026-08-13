@@ -89,13 +89,13 @@ export function TodoList({ pb, active }: { pb: PocketBase; active: boolean }) {
           return (
             <li key={item.id} className={draft ? "task-row is-draft" : "task-row"}>
               <div className="task-main">
-                <strong>
+                <strong className="clamp-2">
                   {draft ? <span className="draft-tag">Draft</span> : null}
                   {item.title || "(untitled)"}
                 </strong>
                 <time dateTime={item.deadline || undefined}>{formatDeadline(item.deadline)}</time>
               </div>
-              {(item.notes ?? "").trim() ? <p className="task-notes">{item.notes}</p> : null}
+              {(item.notes ?? "").trim() ? <p className="task-notes clamp-3">{item.notes}</p> : null}
               {item.source_message ? (
                 <p className="task-meta">From message {item.source_message}</p>
               ) : null}

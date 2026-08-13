@@ -30,6 +30,8 @@ body,
   margin: 0;
   min-height: 100%;
   height: 100%;
+  overflow-x: hidden;
+  max-width: 100vw;
 }
 
 button,
@@ -51,11 +53,50 @@ button:hover {
   border-color: var(--accent);
 }
 
+.clamp-2,
+.clamp-3 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.clamp-2 {
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.clamp-3 {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
 .shell {
   height: 100%;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.shell-main {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell-main > .task-list,
+.shell-main > .calendar-shell,
+.shell-main > .mail-shell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
 }
 
 .shell > .layout,
@@ -70,9 +111,213 @@ button:hover {
   gap: 0.75rem;
   align-items: center;
   padding: 0.85rem 1rem;
+  padding-top: max(0.85rem, env(safe-area-inset-top, 0px));
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel) 88%, transparent);
   backdrop-filter: blur(8px);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.topbar-compact {
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+}
+
+.chrome-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.chrome-back {
+  flex-shrink: 0;
+}
+
+.chrome-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.search-compact {
+  width: min(40vw, 9rem);
+  flex: 1 1 auto;
+  min-width: 5rem;
+  border-radius: 999px;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.chrome-more {
+  position: relative;
+}
+
+.chrome-more > summary {
+  list-style: none;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 0.45rem 0.8rem;
+}
+
+.chrome-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.chrome-more-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 10rem;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 12%, transparent);
+}
+
+.chrome-more-status {
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--line);
+}
+
+.bottom-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.25rem;
+  padding: 0.4rem 0.6rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(8px);
+  flex-shrink: 0;
+}
+
+.bottom-tabs .tab {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.55rem 0.35rem;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.bottom-tabs .tab.active {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+}
+
+.mail-shell {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.mail-shell.desktop {
+  grid-template-columns: 220px minmax(0, 1fr) minmax(0, 1.15fr);
+}
+
+.mail-shell.tablet-split {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  grid-template-rows: auto 1fr;
+}
+
+.mail-shell.tablet-split .mail-folders-toggle {
+  grid-column: 1 / -1;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.mail-shell.tablet-split .list-pane {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.mail-shell.tablet-split .reader-pane {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.mail-shell.stacked {
+  grid-template-columns: 1fr;
+}
+
+.mail-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.mail-shell.stacked .mail-pane[data-active="0"] {
+  display: none;
+}
+
+.mail-shell.desktop .folders-pane,
+.mail-shell.stacked .folders-pane[data-active="1"],
+.mail-shell.tablet-split .folders-pane.drawer.open {
+  display: flex;
+}
+
+.mail-shell.tablet-split .folders-pane.drawer {
+  display: none;
+  position: absolute;
+  z-index: 30;
+  inset: 2.5rem auto 0 0;
+  width: min(18rem, 85vw);
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  box-shadow: 8px 0 24px color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.mail-shell.tablet-split .folders-pane.drawer.open {
+  display: flex;
+}
+
+.mail-drawer-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  border: 0;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+}
+
+.mail-pane .folders,
+.mail-pane .messages,
+.mail-pane .reader {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  border-right: 1px solid var(--line);
+}
+
+.mail-pane.reader-pane .reader,
+.mail-shell.desktop .reader-pane .reader {
+  border-right: 0;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) minmax(0, 1.2fr);
+  min-height: 0;
+  height: 100%;
+  min-width: 0;
 }
 
 .brand {
@@ -80,6 +325,7 @@ button:hover {
   font-size: 1.45rem;
   letter-spacing: 0.02em;
   min-width: 4.5rem;
+  flex-shrink: 0;
 }
 
 .app-tabs {
@@ -117,13 +363,6 @@ button:hover {
 
 .search-spacer {
   flex: 1;
-}
-
-.layout {
-  display: grid;
-  grid-template-columns: 220px minmax(280px, 1fr) minmax(320px, 1.2fr);
-  min-height: 0;
-  height: 100%;
 }
 
 .folders,
@@ -1175,22 +1414,15 @@ button.linkish {
   font-size: 0.85rem;
 }
 
-@media (max-width: 900px) {
-  .layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto 1fr;
-  }
-
-  .folders,
-  .messages {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-    max-height: 220px;
-  }
-
-  .task-main {
+@media (max-width: 1023px) {
+  .calendar-toolbar {
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
+  }
+
+  .calendar-toolbar-left,
+  .calendar-toolbar-right {
+    width: 100%;
   }
 
   .calendar-body {
@@ -1200,10 +1432,52 @@ button.linkish {
   .calendar-rail {
     border-right: 0;
     border-bottom: 1px solid var(--line);
-    max-height: 140px;
+    max-height: 160px;
+  }
+
+  .time-grid-allday,
+  .time-grid-scroll {
+    overflow-x: auto;
+  }
+
+  .task-main {
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 0;
+  }
+
+  .task-row strong,
+  .task-notes {
+    max-width: 100%;
   }
 
   .year-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modal {
+    width: min(100vw - 1.5rem, 32rem);
+    max-height: min(90vh, 840px);
+    overflow: auto;
+  }
+}
+
+@media (max-width: 639px) {
+  .calendar-view-toggle {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .month-grid {
+    font-size: 0.85rem;
+  }
+
+  .month-cell {
+    min-height: 4.2rem;
+  }
+
+  .badge {
+    max-width: 100%;
+    overflow-wrap: anywhere;
   }
 }

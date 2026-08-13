@@ -14,19 +14,17 @@ import {
   type ListMessage,
 } from "./lib/messageCache";
 import { AccountSetup } from "./components/AccountSetup";
-import { FolderList } from "./components/FolderList";
-import { MessageList } from "./components/MessageList";
-import { MessageView } from "./components/MessageView";
+import { AppChrome, type AppTab } from "./components/AppChrome";
+import { MailShell, type MailPaneMeta } from "./components/MailShell";
 import { SyncBadge } from "./components/SyncBadge";
 import { ComposeModal } from "./components/ComposeModal";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { TodoList } from "./components/TodoList";
 import { CalendarView } from "./components/CalendarView";
+import { useViewport } from "./lib/viewport";
 
 const ANALYSIS_POLL_MS = 15_000;
 const ANALYZER_STATUS_POLL_MS = 2_000;
-
-type AppTab = "mail" | "todos" | "calendar";
 
 interface Folder {
   id: string;
@@ -42,6 +40,7 @@ function escapeFilterValue(value: string): string {
 
 export function App() {
   const pb = useMemo(() => createPbClient(), []);
+  const viewport = useViewport();
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [slots, setSlots] = useState<Array<Message | null>>([]);
@@ -59,7 +58,7 @@ export function App() {
   const [analyzerStatus, setAnalyzerStatus] = useState<AnalyzerStatus | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>("mail");
   const [visibleMessageIds, setVisibleMessageIds] = useState<string[]>([]);
-
+  const [mailMeta, setMailMeta] = useState<MailPaneMeta | null>(null);
   const selectedFolderRef = useRef<string | null>(null);
   const queryRef = useRef("");
   const slotsRef = useRef<Array<Message | null>>([]);
@@ -380,100 +379,54 @@ export function App() {
   }
 
   return (
-    <div className="shell">
-      <header className="topbar">
-        <div className="brand">Email</div>
-        <nav className="app-tabs" aria-label="Primary">
-          <button
-            type="button"
-            className={activeTab === "mail" ? "tab active" : "tab"}
-            onClick={() => setActiveTab("mail")}
-          >
-            Mail
-          </button>
-          <button
-            type="button"
-            className={activeTab === "todos" ? "tab active" : "tab"}
-            onClick={() => setActiveTab("todos")}
-          >
-            Todos
-          </button>
-          <button
-            type="button"
-            className={activeTab === "calendar" ? "tab active" : "tab"}
-            onClick={() => setActiveTab("calendar")}
-          >
-            Calendar
-          </button>
-        </nav>
-        {activeTab === "mail" ? (
-          <input
-            className="search"
-            placeholder="Search subject, from, or body…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search mail"
-          />
-        ) : (
-          <div className="search-spacer" />
-        )}
-        <button type="button" onClick={() => setComposeOpen(true)}>
-          Compose
-        </button>
-        <button type="button" onClick={() => setSettingsOpen(true)}>
-          Settings
-        </button>
-        <button type="button" onClick={() => void window.email.triggerSync()}>
-          Sync
-        </button>
-        <SyncBadge status={status} />
-      </header>
-
+    <AppChrome
+      viewport={viewport}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      title={activeTab === "mail" ? mailMeta?.title : undefined}
+      showBack={activeTab === "mail" && Boolean(mailMeta?.canBack)}
+      onBack={mailMeta?.onBack}
+      search={query}
+      onSearchChange={setQuery}
+      showSearch={activeTab === "mail"}
+      onCompose={() => setComposeOpen(true)}
+      onSettings={() => setSettingsOpen(true)}
+      onSync={() => void window.email.triggerSync()}
+      status={status}
+    >
       {activeTab === "mail" ? (
-        <div className="layout">
-          <FolderList
-            folders={folders}
-            selected={selectedFolder}
-            onSelect={selectFolder}
-            syncStatus={status}
-            analyzerStatus={analyzerStatus}
-            downloadingBody={loadingBody}
-          />
-          <MessageList
-            slots={slots}
-            selectedId={selectedMessage?.id ?? null}
-            totalCount={messageTotal}
-            loading={loadingMessages}
-            listKey={`${selectedFolder ?? ""}:${query}`}
-            emptyLabel={
-              loadingMessages && messageTotal === 0
-                ? "Loading…"
-                : query.trim()
-                  ? "No matching emails"
-                  : "No messages in this folder"
-            }
-            onSelect={(m) => void selectMessage(m as Message)}
-            onVisibleRange={(start, end, ids) => {
-              setVisibleMessageIds(ids);
-              void ensurePages(selectedFolderRef.current, queryRef.current, start, end);
-            }}
-            analysisByMessage={analysisByMessage}
-            onToggleFlag={async (msg) => {
-              await pb.collection("messages").update(msg.id, { flagged: !msg.flagged });
-              patchSlot(msg.id, { flagged: !msg.flagged });
-            }}
-            onToggleSeen={async (msg) => {
-              await pb.collection("messages").update(msg.id, { seen: !msg.seen });
-              patchSlot(msg.id, { seen: !msg.seen });
-            }}
-          />
-          <MessageView
-            message={selectedMessage}
-            loadingBody={loadingBody}
-            analysis={selectedMessage ? analysisByMessage[selectedMessage.id] : undefined}
-            onApplyAnalysis={applyAnalysis}
-          />
-        </div>
+        <MailShell
+          viewport={viewport}
+          folders={folders}
+          selectedFolder={selectedFolder}
+          onSelectFolder={selectFolder}
+          slots={slots}
+          messageTotal={messageTotal}
+          loadingMessages={loadingMessages}
+          query={query}
+          selectedMessage={selectedMessage}
+          onSelectMessage={(m) => void selectMessage(m)}
+          clearSelectedMessage={() => setSelectedMessage(null)}
+          loadingBody={loadingBody}
+          syncStatus={status}
+          analyzerStatus={analyzerStatus}
+          downloadingBody={loadingBody}
+          analysisByMessage={analysisByMessage}
+          onVisibleRange={(start, end, ids) => {
+            setVisibleMessageIds(ids);
+            void ensurePages(selectedFolderRef.current, queryRef.current, start, end);
+          }}
+          onToggleFlag={async (msg) => {
+            await pb.collection("messages").update(msg.id, { flagged: !msg.flagged });
+            patchSlot(msg.id, { flagged: !msg.flagged });
+          }}
+          onToggleSeen={async (msg) => {
+            await pb.collection("messages").update(msg.id, { seen: !msg.seen });
+            patchSlot(msg.id, { seen: !msg.seen });
+          }}
+          onApplyAnalysis={applyAnalysis}
+          onPaneMeta={setMailMeta}
+        />
       ) : null}
 
       {activeTab === "todos" ? <TodoList pb={pb} active={activeTab === "todos"} /> : null}
@@ -497,6 +450,6 @@ export function App() {
           }}
         />
       )}
-    </div>
+    </AppChrome>
   );
 }

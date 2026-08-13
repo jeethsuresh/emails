@@ -11,6 +11,8 @@ export function FolderList({
   folders,
   selected,
   onSelect,
+  contactsActive,
+  onSelectContacts,
   syncStatus,
   analyzerStatus,
   downloadingBody,
@@ -18,6 +20,8 @@ export function FolderList({
   folders: Folder[];
   selected: string | null;
   onSelect: (id: string) => void;
+  contactsActive: boolean;
+  onSelectContacts: () => void;
   syncStatus: SyncStatus | null;
   analyzerStatus: AnalyzerStatus | null;
   downloadingBody: boolean;
@@ -25,7 +29,16 @@ export function FolderList({
   return (
     <aside className="folders">
       <div className="folders-body">
-        <h2>Folders</h2>
+        <div className="folders-heading">
+          <h2>Folders</h2>
+          <button
+            type="button"
+            className={contactsActive ? "contacts-control active" : "contacts-control"}
+            onClick={onSelectContacts}
+          >
+            Contacts
+          </button>
+        </div>
         <ul>
           {folders.map((f) => (
             <li key={f.id}>

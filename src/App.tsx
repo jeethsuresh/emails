@@ -17,6 +17,8 @@ import {
   composeReply,
   listAliases,
   type ComposePrefill,
+  type MailThread,
+  type ThreadMessage,
 } from "./lib/mailApi";
 import { AccountSetup } from "./components/AccountSetup";
 import { AppChrome, type AppTab } from "./components/AppChrome";
@@ -52,6 +54,10 @@ export function App() {
   const [messageTotal, setMessageTotal] = useState(0);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+  const [selectedAlias, setSelectedAlias] = useState("");
+  const [selectedThread, setSelectedThread] = useState<MailThread | null>(null);
+  const [threadMessages, setThreadMessages] = useState<ThreadMessage[]>([]);
+  const [threadRefreshKey, setThreadRefreshKey] = useState(0);
   const [loadingBody, setLoadingBody] = useState(false);
   const [query, setQuery] = useState("");
   const [hasAccount, setHasAccount] = useState(false);
@@ -202,6 +208,7 @@ export function App() {
         return rank(a.role) - rank(b.role) || a.name.localeCompare(b.name);
       });
       setFolders(folderRows);
+      setThreadRefreshKey((key) => key + 1);
 
       let folderId = selectedFolderRef.current;
       if (!folderId || !folderRows.some((f) => f.id === folderId)) {
@@ -209,7 +216,11 @@ export function App() {
         selectedFolderRef.current = folderId;
         setSelectedFolder(folderId);
       }
-      await reloadList(folderId, queryRef.current);
+      if (queryRef.current.trim()) {
+        await reloadList(folderId, queryRef.current);
+      } else {
+        resetMessageList();
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/autocancel|abort/i.test(msg)) {
@@ -302,10 +313,17 @@ export function App() {
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
-      void reloadList(selectedFolderRef.current, query);
+      setSelectedThread(null);
+      setThreadMessages([]);
+      setSelectedMessage(null);
+      if (query.trim()) {
+        void reloadList(selectedFolderRef.current, query);
+      } else {
+        resetMessageList();
+      }
     }, query.trim() ? 250 : 0);
     return () => window.clearTimeout(handle);
-  }, [query, reloadList]);
+  }, [query, reloadList, resetMessageList]);
 
   useEffect(() => {
     void refreshAnalyses(visibleMessageIds);
@@ -343,11 +361,15 @@ export function App() {
     queryRef.current = "";
     setSelectedFolder(id);
     setSelectedMessage(null);
+    setSelectedThread(null);
+    setThreadMessages([]);
     setQuery("");
-    void reloadList(id, "");
+    resetMessageList();
   };
 
   const selectMessage = async (m: Message) => {
+    setSelectedThread(null);
+    setThreadMessages([]);
     setSelectedMessage(m);
     setLoadingBody(true);
     try {
@@ -373,6 +395,31 @@ export function App() {
       console.error("selectMessage failed", err);
     } finally {
       setLoadingBody(false);
+    }
+  };
+
+  const selectLoadedMessage = (message: ThreadMessage) => {
+    setSelectedMessage(message);
+    setLoadingBody(false);
+  };
+
+  const openThread = (thread: MailThread, messages: ThreadMessage[]) => {
+    setSelectedThread(thread);
+    setThreadMessages(messages);
+    setSelectedMessage(messages.at(-1) ?? null);
+    setLoadingBody(false);
+  };
+
+  const clearMailSelection = () => {
+    setSelectedMessage(null);
+    setSelectedThread(null);
+    setThreadMessages([]);
+  };
+
+  const refreshCurrentList = () => {
+    setThreadRefreshKey((key) => key + 1);
+    if (queryRef.current.trim()) {
+      void reloadList(selectedFolderRef.current, queryRef.current);
     }
   };
 
@@ -431,17 +478,28 @@ export function App() {
     >
       {activeTab === "mail" ? (
         <MailShell
+          pb={pb}
           viewport={viewport}
           folders={folders}
           selectedFolder={selectedFolder}
           onSelectFolder={selectFolder}
+          selectedAlias={selectedAlias}
+          onAliasChange={(email) => {
+            setSelectedAlias(email);
+            clearMailSelection();
+          }}
+          selectedThread={selectedThread}
+          threadMessages={threadMessages}
+          onOpenThread={openThread}
+          onSelectLoadedMessage={selectLoadedMessage}
+          threadRefreshKey={threadRefreshKey}
           slots={slots}
           messageTotal={messageTotal}
           loadingMessages={loadingMessages}
           query={query}
           selectedMessage={selectedMessage}
           onSelectMessage={(m) => void selectMessage(m)}
-          clearSelectedMessage={() => setSelectedMessage(null)}
+          clearSelectedMessage={clearMailSelection}
           loadingBody={loadingBody}
           syncStatus={status}
           analyzerStatus={analyzerStatus}
@@ -477,8 +535,8 @@ export function App() {
             setComposeOpen(false);
             setComposePrefill(undefined);
           }}
-          onSaved={() => void reloadList(selectedFolderRef.current, queryRef.current)}
-          onSent={() => void reloadList(selectedFolderRef.current, queryRef.current)}
+          onSaved={refreshCurrentList}
+          onSent={refreshCurrentList}
         />
       )}
       {settingsOpen && (

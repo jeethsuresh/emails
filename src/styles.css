@@ -419,6 +419,33 @@ button:hover {
   padding-bottom: 0.5rem;
 }
 
+.folders-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.folders-heading h2 {
+  margin: 0;
+}
+
+.folders .contacts-control {
+  width: auto;
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.3rem 0.55rem;
+}
+
+.folders .contacts-control.active {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 .reader {
   border-right: 0;
   display: flex;
@@ -601,6 +628,155 @@ button:hover {
   display: flex;
   gap: 0.35rem;
   padding: 0 0.35rem 0.35rem;
+}
+
+.alias-filter {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.4rem;
+  padding: 0.65rem 1rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+
+.alias-filter .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+  max-width: 16rem;
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel) 88%, white);
+}
+
+.alias-filter .chip > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.alias-filter .chip.active {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.chip-count {
+  font-size: 0.7rem;
+  opacity: 0.8;
+}
+
+.thread-list .thread-row {
+  gap: 0.3rem;
+}
+
+.thread-list li.unread .subject,
+.thread-list li.unread .meta strong {
+  font-weight: 750;
+  color: var(--ink);
+}
+
+.thread-subject-line {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.thread-subject-line .subject {
+  flex: 1;
+  min-width: 0;
+}
+
+.thread-count {
+  flex-shrink: 0;
+  min-width: 1.45rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 62%, white);
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+.unread-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.thread-opening {
+  color: var(--accent);
+  font-size: 0.75rem;
+}
+
+.contacts-back {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  text-transform: uppercase;
+  font-size: inherit;
+  font-weight: 700;
+  letter-spacing: inherit;
+}
+
+.contact-heading {
+  display: grid;
+  gap: 0.15rem;
+  margin: -0.15rem 0 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+}
+
+.contact-heading span,
+.contacts-view .contact-list time {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.thread-message-stack {
+  display: flex;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  padding: 0.55rem 0.75rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+}
+
+.thread-message-stack button {
+  display: grid;
+  grid-template-columns: auto minmax(5rem, 1fr);
+  gap: 0.1rem 0.4rem;
+  min-width: 10rem;
+  max-width: 15rem;
+  text-align: left;
+  background: transparent;
+}
+
+.thread-message-stack button > span {
+  grid-row: 1 / 3;
+  align-self: center;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.thread-message-stack time {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.thread-message-stack button.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, white);
 }
 
 .priority-tag {

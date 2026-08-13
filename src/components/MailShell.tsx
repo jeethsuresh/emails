@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type PocketBase from "pocketbase";
 import type { AnalyzerStatus, MessageAnalysis, SyncStatus } from "../../shared/types";
 import type { ListMessage } from "../lib/messageCache";
+import type { MailThread, ThreadMessage } from "../lib/mailApi";
 import { BREAKPOINTS, type Viewport, useContentWidth } from "../lib/viewport";
+import { AliasFilter } from "./AliasFilter";
+import { ContactsView } from "./ContactsView";
 import { FolderList } from "./FolderList";
 import { MessageList } from "./MessageList";
 import { MessageView } from "./MessageView";
+import { ThreadList } from "./ThreadList";
 
 export type MailPane = "folders" | "list" | "reading";
 
@@ -21,10 +26,18 @@ export interface MailPaneMeta {
 }
 
 export function MailShell({
+  pb,
   viewport,
   folders,
   selectedFolder,
   onSelectFolder,
+  selectedAlias,
+  onAliasChange,
+  selectedThread,
+  threadMessages,
+  onOpenThread,
+  onSelectLoadedMessage,
+  threadRefreshKey,
   slots,
   messageTotal,
   loadingMessages,
@@ -44,10 +57,18 @@ export function MailShell({
   onComposeReply,
   onPaneMeta,
 }: {
+  pb: PocketBase;
   viewport: Viewport;
   folders: Folder[];
   selectedFolder: string | null;
   onSelectFolder: (id: string) => void;
+  selectedAlias: string;
+  onAliasChange: (email: string) => void;
+  selectedThread: MailThread | null;
+  threadMessages: ThreadMessage[];
+  onOpenThread: (thread: MailThread, messages: ThreadMessage[]) => void;
+  onSelectLoadedMessage: (message: ThreadMessage) => void;
+  threadRefreshKey: number;
   slots: Array<ListMessage | null>;
   messageTotal: number;
   loadingMessages: boolean;
@@ -71,6 +92,7 @@ export function MailShell({
   const contentWidth = useContentWidth(rootRef);
   const [foldersOpen, setFoldersOpen] = useState(false);
   const [stackPane, setStackPane] = useState<MailPane>("folders");
+  const [contactsOpen, setContactsOpen] = useState(false);
 
   const stacked = viewport === "phone" || (viewport === "tablet" && contentWidth < BREAKPOINTS.tabletSplitMin);
   const tabletSplit = viewport === "tablet" && !stacked;
@@ -84,6 +106,7 @@ export function MailShell({
   }, [stacked, selectedFolder, selectedMessage]);
 
   const selectFolder = (id: string) => {
+    setContactsOpen(false);
     onSelectFolder(id);
     clearSelectedMessage();
     setFoldersOpen(false);
@@ -93,6 +116,24 @@ export function MailShell({
   const selectMessage = (m: ListMessage) => {
     onSelectMessage(m);
     if (stacked) setStackPane("reading");
+  };
+
+  const selectLoadedMessage = (message: ThreadMessage) => {
+    clearSelectedMessage();
+    onSelectLoadedMessage(message);
+    if (stacked) setStackPane("reading");
+  };
+
+  const openThread = (thread: MailThread, messages: ThreadMessage[]) => {
+    onOpenThread(thread, messages);
+    if (stacked) setStackPane("reading");
+  };
+
+  const selectContacts = () => {
+    setContactsOpen(true);
+    clearSelectedMessage();
+    setFoldersOpen(false);
+    if (stacked) setStackPane("list");
   };
 
   const goBack = useCallback(() => {
@@ -110,7 +151,9 @@ export function MailShell({
     stacked && stackPane === "reading"
       ? selectedMessage?.subject || "Message"
       : stacked && stackPane === "list"
-        ? folders.find((f) => f.id === selectedFolder)?.name || "Mail"
+        ? contactsOpen
+          ? "Contacts"
+          : folders.find((f) => f.id === selectedFolder)?.name || "Mail"
         : "Folders";
 
   const canBack = stacked && stackPane !== "folders";
@@ -142,8 +185,10 @@ export function MailShell({
       >
         <FolderList
           folders={folders}
-          selected={selectedFolder}
+          selected={contactsOpen ? null : selectedFolder}
           onSelect={selectFolder}
+          contactsActive={contactsOpen}
+          onSelectContacts={selectContacts}
           syncStatus={syncStatus}
           analyzerStatus={analyzerStatus}
           downloadingBody={downloadingBody}
@@ -154,31 +199,61 @@ export function MailShell({
         className="mail-pane list-pane"
         data-active={desktop || tabletSplit || (stacked && stackPane === "list") ? "1" : "0"}
       >
-        <MessageList
-          slots={slots}
-          selectedId={selectedMessage?.id ?? null}
-          totalCount={messageTotal}
-          loading={loadingMessages}
-          listKey={`${selectedFolder ?? ""}:${query}`}
-          emptyLabel={
-            loadingMessages && messageTotal === 0
-              ? "Loading…"
-              : query.trim()
-                ? "No matching emails"
-                : "No messages in this folder"
-          }
-          onSelect={selectMessage}
-          onVisibleRange={onVisibleRange}
-          analysisByMessage={analysisByMessage}
-          onToggleFlag={onToggleFlag}
-          onToggleSeen={onToggleSeen}
-        />
+        {query.trim() ? (
+          <MessageList
+            slots={slots}
+            selectedId={selectedMessage?.id ?? null}
+            totalCount={messageTotal}
+            loading={loadingMessages}
+            listKey={`${selectedFolder ?? ""}:${query}`}
+            emptyLabel={loadingMessages && messageTotal === 0 ? "Loading…" : "No matching emails"}
+            onSelect={selectMessage}
+            onVisibleRange={onVisibleRange}
+            analysisByMessage={analysisByMessage}
+            onToggleFlag={onToggleFlag}
+            onToggleSeen={onToggleSeen}
+          />
+        ) : contactsOpen ? (
+          <ContactsView
+            pb={pb}
+            selectedMessageId={selectedMessage?.id ?? null}
+            onSelectMessage={selectLoadedMessage}
+          />
+        ) : (
+          <>
+            <AliasFilter pb={pb} value={selectedAlias} onChange={onAliasChange} />
+            <ThreadList
+              pb={pb}
+              folder={selectedFolder}
+              receivedFor={selectedAlias}
+              selectedId={selectedThread?.id ?? null}
+              refreshKey={threadRefreshKey}
+              onOpenThread={openThread}
+            />
+          </>
+        )}
       </div>
 
       <div
         className="mail-pane reader-pane"
         data-active={desktop || tabletSplit || (stacked && stackPane === "reading") ? "1" : "0"}
       >
+        {threadMessages.length > 1 ? (
+          <nav className="thread-message-stack" aria-label="Messages in thread">
+            {threadMessages.map((message, index) => (
+              <button
+                type="button"
+                key={message.id}
+                className={selectedMessage?.id === message.id ? "active" : ""}
+                onClick={() => onSelectLoadedMessage(message)}
+              >
+                <span>{index + 1}</span>
+                <strong className="clamp-2">{message.from_addr || "(unknown)"}</strong>
+                <time>{message.date ? new Date(message.date).toLocaleDateString() : ""}</time>
+              </button>
+            ))}
+          </nav>
+        ) : null}
         <MessageView
           message={selectedMessage}
           loadingBody={loadingBody}

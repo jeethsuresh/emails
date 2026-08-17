@@ -108,6 +108,20 @@ func TestParseResultAddEventFields(t *testing.T) {
 	}
 }
 
+func TestParseResultAddEventStartOnlyDefaultsEnd(t *testing.T) {
+	raw := `{"priority":"high","suggested_action":"add_event","action_target":"WestJet YYC-YVR","event_starts_at":"2026-09-01T14:30:00Z"}`
+	got, err := ParseResult(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EventStartsAt != "2026-09-01T14:30:00Z" {
+		t.Fatalf("start: %q", got.EventStartsAt)
+	}
+	if got.EventEndsAt != "2026-09-01T15:30:00Z" {
+		t.Fatalf("expected default end start+1h, got %q", got.EventEndsAt)
+	}
+}
+
 func TestParseResultMissingFields(t *testing.T) {
 	raw := `{"action_target":"Inbox","suggested_reply":null}`
 	_, err := ParseResult(raw)

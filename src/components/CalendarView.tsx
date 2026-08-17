@@ -7,9 +7,10 @@ import {
   fetchCalendarBounds,
   fetchCalendarWindow,
   formatDisplayDayLabel,
-  formatDisplayTime,
   getCalendarSettings,
   minutesFromDisplayWall,
+  layoutEndMinutesOnStartDay,
+  formatDisplayTimeRange,
   resolveCalendarColor,
   setCalendarSettings,
   todayAnchorLocal,
@@ -45,10 +46,21 @@ export function CalendarView({ pb, active }: { pb: PocketBase; active: boolean }
   const [editEvent, setEditEvent] = useState<WindowEvent | null>(null);
   const [tzDraft, setTzDraft] = useState("");
   const [managerOpen, setManagerOpen] = useState(false);
+  const [draftIds, setDraftIds] = useState<string[]>([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const refreshCalendars = useCallback(async () => {
     const rows = await pb.collection("calendars").getFullList<CalendarRecord>({ batch: 50 });
     setCalendars(rows);
+  }, [pb]);
+
+  const refreshDraftIds = useCallback(async () => {
+    const rows = await pb.collection("events").getFullList<{ id: string }>({
+      filter: 'status = "draft"',
+      fields: "id",
+      batch: 200,
+    });
+    setDraftIds(rows.map((row) => row.id));
   }, [pb]);
 
   const refresh = useCallback(async () => {
@@ -56,28 +68,32 @@ export function CalendarView({ pb, active }: { pb: PocketBase; active: boolean }
     setError(null);
     try {
       const settings = await getCalendarSettings(pb);
-      const tz = settings.displayTimezone || displayTimezone;
-      if (settings.displayTimezone && settings.displayTimezone !== displayTimezone) {
-        setDisplayTimezone(settings.displayTimezone);
-        setTzDraft(settings.displayTimezone);
+      // Electron sidecar often has time.Local=UTC; always send a real IANA zone
+      // from the renderer so list/grid match the user's clock (and the edit modal).
+      const systemTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const saved = (settings.displayTimezone || "").trim();
+      const tz = saved || displayTimezone.trim() || systemTz;
+      if (tz !== displayTimezone) {
+        setDisplayTimezone(tz);
+        setTzDraft(saved ? saved : tz);
       }
       const activeView: CalendarViewMode = mode;
       const bounds = await fetchCalendarBounds(pb, {
         view: activeView,
         anchor,
-        displayTimezone: tz || undefined,
+        displayTimezone: tz,
         days: multiDays,
       });
       setBoundsFromDate(bounds.fromDate || "");
       if (bounds.displayTimezone) {
         setDisplayTimezone(bounds.displayTimezone);
-        setTzDraft((prev) => prev || bounds.displayTimezone);
+        setTzDraft((prev) => (saved ? prev || bounds.displayTimezone : bounds.displayTimezone));
       }
 
       const win = await fetchCalendarWindow(pb, {
         from: bounds.from,
         to: bounds.to,
-        displayTimezone: bounds.displayTimezone || tz || undefined,
+        displayTimezone: bounds.displayTimezone || tz,
       });
       setEvents(win.events ?? []);
 
@@ -95,12 +111,13 @@ export function CalendarView({ pb, active }: { pb: PocketBase; active: boolean }
       }
 
       await refreshCalendars();
+      await refreshDraftIds();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [pb, mode, anchor, multiDays, displayTimezone, refreshCalendars]);
+  }, [pb, mode, anchor, multiDays, displayTimezone, refreshCalendars, refreshDraftIds]);
 
   useEffect(() => {
     if (!active) return;
@@ -148,10 +165,13 @@ export function CalendarView({ pb, active }: { pb: PocketBase; active: boolean }
   }, [events]);
 
   const saveTz = async (value?: string) => {
-    const next = (value ?? tzDraft).trim();
+    const systemTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    const raw = (value ?? tzDraft).trim();
+    // Persist empty as "use system", but drive the API with a concrete IANA zone.
+    const next = raw === "" || raw.toLowerCase() === "system" ? "" : raw;
     await setCalendarSettings(pb, next);
-    setTzDraft(next);
-    setDisplayTimezone(next);
+    setTzDraft(next || systemTz);
+    setDisplayTimezone(next || systemTz);
     await refresh();
   };
 
@@ -169,6 +189,32 @@ export function CalendarView({ pb, active }: { pb: PocketBase; active: boolean }
     const baseId = ev.id.includes("#") ? ev.id.slice(0, ev.id.indexOf("#")) : ev.id;
     await pb.collection("events").delete(baseId);
     await refresh();
+  };
+
+  const deleteEvent = async (ev: WindowEvent) => {
+    if (!window.confirm(`Delete “${ev.title || "untitled event"}”?`)) return;
+    await dismiss(ev);
+  };
+
+  const dismissAllDrafts = async () => {
+    if (draftIds.length === 0 || bulkBusy) return;
+    const n = draftIds.length;
+    if (!window.confirm(`Dismiss ${n} draft event${n === 1 ? "" : "s"}?`)) {
+      return;
+    }
+    setBulkBusy(true);
+    setError(null);
+    try {
+      for (const id of draftIds) {
+        const baseId = id.includes("#") ? id.slice(0, id.indexOf("#")) : id;
+        await pb.collection("events").delete(baseId);
+      }
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBulkBusy(false);
+    }
   };
 
   return (
@@ -263,6 +309,16 @@ export function CalendarView({ pb, active }: { pb: PocketBase; active: boolean }
           <button type="button" onClick={() => setManagerOpen(true)}>
             Calendars
           </button>
+          {draftIds.length > 0 ? (
+            <button
+              type="button"
+              className="danger"
+              disabled={bulkBusy || loading}
+              onClick={() => void dismissAllDrafts()}
+            >
+              {bulkBusy ? "Working…" : `Dismiss all drafts (${draftIds.length})`}
+            </button>
+          ) : null}
           <button type="button" onClick={() => openCreate({ timezone: displayTimezone })}>
             New event
           </button>
@@ -311,6 +367,7 @@ export function CalendarView({ pb, active }: { pb: PocketBase; active: boolean }
               onEdit={setEditEvent}
               onApprove={(ev) => void approve(ev)}
               onDismiss={(ev) => void dismiss(ev)}
+              onDelete={(ev) => void deleteEvent(ev)}
             />
           ) : null}
           {mode === "month" ? (
@@ -392,12 +449,14 @@ function CalendarList({
   onEdit,
   onApprove,
   onDismiss,
+  onDelete,
 }: {
   events: WindowEvent[];
   scrollToDay: string;
   onEdit: (ev: WindowEvent) => void;
   onApprove: (ev: WindowEvent) => void;
   onDismiss: (ev: WindowEvent) => void;
+  onDelete: (ev: WindowEvent) => void;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const groups = useMemo(() => {
@@ -455,7 +514,7 @@ function CalendarList({
                         ? "No time set"
                         : ev.allDay
                           ? "All day"
-                          : `${formatDisplayTime(ev.displayStart)} – ${formatDisplayTime(ev.displayEnd)}`}
+                          : formatDisplayTimeRange(ev.displayStart, ev.displayEnd)}
                     </span>
                   </button>
                   {draft ? (
@@ -467,7 +526,13 @@ function CalendarList({
                         Dismiss
                       </button>
                     </div>
-                  ) : null}
+                  ) : (
+                    <div className="task-actions">
+                      <button type="button" className="danger" onClick={() => onDelete(ev)}>
+                        Delete
+                      </button>
+                    </div>
+                  )}
                 </li>
               );
             })}
@@ -538,9 +603,9 @@ function TimeGrid({
             ))}
             {(timedByDay.get(day) ?? []).map((ev) => {
               const startM = minutesFromDisplayWall(ev.displayStart);
-              const endM = Math.max(startM + 30, minutesFromDisplayWall(ev.displayEnd));
+              const endM = layoutEndMinutesOnStartDay(ev.displayStart, ev.displayEnd);
               const top = (startM / 60) * HOUR_HEIGHT;
-              const height = ((endM - startM) / 60) * HOUR_HEIGHT;
+              const height = Math.max((15 / 60) * HOUR_HEIGHT, ((endM - startM) / 60) * HOUR_HEIGHT);
               const lanes = Math.max(1, ev.laneCount);
               const width = 100 / lanes;
               const left = ev.lane * width;
@@ -564,9 +629,7 @@ function TimeGrid({
                   }}
                 >
                   <strong className="clamp-2">{ev.title || "(untitled)"}</strong>
-                  <span>
-                    {formatDisplayTime(ev.displayStart)}–{formatDisplayTime(ev.displayEnd)}
-                  </span>
+                  <span>{formatDisplayTimeRange(ev.displayStart, ev.displayEnd)}</span>
                 </button>
               );
             })}

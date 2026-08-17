@@ -119,6 +119,23 @@ export function CreateEventModal({
     }
   };
 
+  const deleteEvent = async () => {
+    if (!edit?.id) return;
+    if (!window.confirm("Delete this event?")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const baseId = edit.id.includes("#") ? edit.id.slice(0, edit.id.indexOf("#")) : edit.id;
+      await pb.collection("events").delete(baseId);
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const body = buildBody();
@@ -254,6 +271,11 @@ export function CreateEventModal({
                 Approve
               </button>
             </>
+          ) : null}
+          {edit?.id && edit.status !== "draft" ? (
+            <button type="button" className="danger" disabled={busy} onClick={() => void deleteEvent()}>
+              Delete
+            </button>
           ) : null}
           <button type="button" onClick={onClose}>
             Cancel

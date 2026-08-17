@@ -50,6 +50,42 @@ func TestUpsertThreadAggregatesAllMessages(t *testing.T) {
 	}
 }
 
+func TestListingFolderPrefersInboxAfterSentReply(t *testing.T) {
+	app := newMailmetaTestApp(t)
+	inbox := saveTestRecord(t, app, "folders", map[string]any{"name": "Inbox", "role": "inbox"})
+	sent := saveTestRecord(t, app, "folders", map[string]any{"name": "Sent", "role": "sent"})
+	inbound := saveTestRecord(t, app, "messages", map[string]any{
+		"thread_id": "threadfolder001",
+		"subject":   "Project",
+		"snippet":   "hello",
+		"from_addr": "alice@example.net",
+		"to_addrs":  "me@example.com",
+		"date":      "2026-08-13T12:00:00Z",
+		"folder":    inbox.Id,
+		"seen":      true,
+	})
+	saveTestRecord(t, app, "messages", map[string]any{
+		"thread_id": "threadfolder001",
+		"subject":   "Re: Project",
+		"snippet":   "reply",
+		"from_addr": "me@example.com",
+		"to_addrs":  "alice@example.net",
+		"date":      "2026-08-13T13:00:00Z",
+		"folder":    sent.Id,
+		"seen":      true,
+	})
+	if err := UpsertThreadFromMessage(app, inbound); err != nil {
+		t.Fatal(err)
+	}
+	thread, err := app.FindRecordById("threads", "threadfolder001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := thread.GetString("folder"); got != inbox.Id {
+		t.Fatalf("folder = %q, want inbox %q", got, inbox.Id)
+	}
+}
+
 func TestRecountThreadDeletesThreadWhenLastMessageMovesAway(t *testing.T) {
 	app := newMailmetaTestApp(t)
 	msg := saveTestRecord(t, app, "messages", map[string]any{

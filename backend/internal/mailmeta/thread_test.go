@@ -69,6 +69,22 @@ func TestResolveThreadViaInReplyTo(t *testing.T) {
 	}
 }
 
+func TestResolveThreadViaReferences(t *testing.T) {
+	lu := mapLookup{byMID: map[string]string{"root@x": "thr1"}}
+	got := ResolveThreadID("<c@x>", "", "<root@x> <mid@x>", "Re: Hi", "a@b.com", "c@d.com", lu, time.Now())
+	if got != "thr1" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestResolveThreadPrefersInReplyToOverReferences(t *testing.T) {
+	lu := mapLookup{byMID: map[string]string{"a@x": "thrA", "b@x": "thrB"}}
+	got := ResolveThreadID("<c@x>", "<a@x>", "<b@x>", "Re: Hi", "a@b.com", "c@d.com", lu, time.Now())
+	if got != "thrA" {
+		t.Fatalf("got %q want thrA", got)
+	}
+}
+
 func TestResolveThreadFallbackSubject(t *testing.T) {
 	lu := mapLookup{bySub: map[string]string{"hi": "thr2"}}
 	got := ResolveThreadID("<c@x>", "", "", "Re: Hi", "a@b.com", "c@d.com", lu, time.Now())

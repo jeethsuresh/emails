@@ -28,7 +28,7 @@ export function ConnectionForm({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (initial) setForm(initial);
+    if (initial) setForm((prev) => (prev === initial ? prev : initial));
   }, [initial]);
 
   const set = <K extends keyof ConnectionSettings>(key: K, value: ConnectionSettings[K]) => {

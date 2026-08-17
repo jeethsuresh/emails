@@ -5,6 +5,8 @@ package host
 import (
 	"fmt"
 	"hash/fnv"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -16,7 +18,12 @@ type Status struct {
 	MessagesSynced int     `json:"messagesSynced"`
 }
 
-func DataDir() string        { return "./pb_data" }
+func DataDir() string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".emails", "pb_data")
+	}
+	return "./pb_data"
+}
 func AttachmentsDir() string { return "./attachments" }
 func ReportStatus(Status)    {}
 

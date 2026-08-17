@@ -13,7 +13,7 @@ export function ComposeModal({
   pb: PocketBase;
   onClose: () => void;
   onSaved: () => void;
-  onSent?: () => void;
+  onSent?: (result?: { warning?: string }) => void;
   prefill?: ComposePrefill;
   /** Account addresses plus discovered aliases, in preference order. */
   fromOptions?: string[];
@@ -24,6 +24,7 @@ export function ComposeModal({
   const firstFrom = senderOptions[0] ?? "";
   const [from, setFrom] = useState(prefill?.from ?? firstFrom);
   const [to, setTo] = useState(prefill?.to.join(", ") ?? "");
+  const [cc, setCc] = useState(prefill?.cc.join(", ") ?? "");
   const [subject, setSubject] = useState(prefill?.subject ?? "");
   const [body, setBody] = useState(prefill?.bodyText ?? "");
   const [busy, setBusy] = useState(false);
@@ -47,7 +48,7 @@ export function ComposeModal({
       account,
       from_addr: from,
       to_addrs: to,
-      cc_addrs: prefill?.cc.join(", ") ?? "",
+      cc_addrs: cc,
       subject,
       body_text: body,
       in_reply_to: prefill?.inReplyTo ?? "",
@@ -66,17 +67,17 @@ export function ComposeModal({
           await saveDraft();
           onSaved();
         } else {
-          await sendMail(pb, {
+          const result = await sendMail(pb, {
             from,
             to: recipients(to),
-            cc: prefill?.cc ?? [],
+            cc: recipients(cc),
             subject,
             bodyText: body,
             inReplyTo: prefill?.inReplyTo ?? "",
             references: prefill?.references ?? "",
             threadId: prefill?.threadId ?? "",
           });
-          onSent?.();
+          onSent?.(result);
         }
         onClose();
       } catch (err) {
@@ -125,6 +126,10 @@ export function ComposeModal({
         <label>
           To
           <input value={to} onChange={(e) => setTo(e.target.value)} required />
+        </label>
+        <label>
+          Cc
+          <input value={cc} onChange={(e) => setCc(e.target.value)} />
         </label>
         <label>
           Subject

@@ -20,6 +20,7 @@ type threadMemberRow struct {
 	ToAddrs           string `db:"to_addrs"`
 	ReceivedFor       string `db:"received_for"`
 	Folder            string `db:"folder"`
+	Role              string `db:"role"`
 	Seen              bool   `db:"seen"`
 }
 
@@ -74,11 +75,13 @@ func RecountThread(app core.App, threadID string) error {
 func threadMembers(app core.App, threadID string) ([]threadMemberRow, error) {
 	rows := make([]threadMemberRow, 0, 8)
 	err := app.DB().NewQuery(`
-		SELECT subject, normalized_subject, snippet, date,
-		       from_addr, to_addrs, received_for, folder, seen
-		FROM messages
-		WHERE thread_id = {:thread}
-		ORDER BY date DESC
+		SELECT m.subject, m.normalized_subject, m.snippet, m.date,
+		       m.from_addr, m.to_addrs, m.received_for, m.folder, m.seen,
+		       COALESCE(f.role, '') AS role
+		FROM messages m
+		LEFT JOIN folders f ON f.id = m.folder
+		WHERE m.thread_id = {:thread}
+		ORDER BY m.date DESC
 	`).Bind(dbx.Params{"thread": threadID}).All(&rows)
 	if err != nil {
 		return nil, err
@@ -113,9 +116,28 @@ func applyThreadAggregates(thread *core.Record, members []threadMemberRow) {
 	thread.Set("message_count", len(members))
 	thread.Set("participants", strings.Join(participantList, ", "))
 	thread.Set("received_for", latest.ReceivedFor)
-	thread.Set("folder", latest.Folder)
+	thread.Set("folder", listingFolder(members))
 	thread.Set("unread_count", unreadCount)
 	thread.Set("updated_at", time.Now().UTC().Format(time.RFC3339))
+}
+
+// listingFolder prefers the newest message that still lives in a mailbox the
+// user reads (not Sent/Drafts/Trash/Junk), so a reply does not rehome the
+// denormalized folder to Sent.
+func listingFolder(members []threadMemberRow) string {
+	for _, member := range members {
+		switch strings.ToLower(strings.TrimSpace(member.Role)) {
+		case "sent", "drafts", "trash", "junk", "spam":
+			continue
+		}
+		if member.Folder != "" {
+			return member.Folder
+		}
+	}
+	if len(members) > 0 {
+		return members[0].Folder
+	}
+	return ""
 }
 
 func memberFromRecord(msg *core.Record) threadMemberRow {

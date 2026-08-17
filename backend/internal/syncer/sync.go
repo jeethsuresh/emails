@@ -999,8 +999,12 @@ func ingestBuffer(app core.App, accountID, accountEmail, folderID string, buf *i
 			logProgress("  uid %d: recount old thread failed: %v", uid, err)
 		}
 	}
-	_ = mailmeta.UpsertThreadFromMessage(app, rec)
-	_ = mailmeta.UpsertContactFromMessage(app, rec, created)
+	if err := mailmeta.UpsertThreadFromMessage(app, rec); err != nil {
+		logProgress("  uid %d: upsert thread failed: %v", uid, err)
+	}
+	if err := mailmeta.UpsertContactFromMessage(app, rec, created); err != nil {
+		logProgress("  uid %d: upsert contact failed: %v", uid, err)
+	}
 	enqueueIfBodied(app, rec)
 	return nil
 }

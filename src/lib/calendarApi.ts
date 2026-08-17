@@ -233,6 +233,34 @@ export function minutesFromDisplayWall(wall: string): number {
   return Number(m[4]) * 60 + Number(m[5]);
 }
 
+/**
+ * End minute offset for time-grid layout on the start day. Handles overnight
+ * spans (end wall on a later civil day) so height isn't collapsed to 30m.
+ * Clips at end-of-day (24h) for the start-day column.
+ */
+export function layoutEndMinutesOnStartDay(displayStart: string, displayEnd: string): number {
+  const startM = minutesFromDisplayWall(displayStart);
+  const endM = minutesFromDisplayWall(displayEnd);
+  const startDay = displayStart.slice(0, 10);
+  const endDay = displayEnd.slice(0, 10);
+  if (endDay > startDay || endM <= startM) {
+    return 24 * 60;
+  }
+  return Math.max(startM + 15, endM);
+}
+
+/** Format a timed range; overnight ends note the next calendar day. */
+export function formatDisplayTimeRange(displayStart: string, displayEnd: string): string {
+  const start = formatDisplayTime(displayStart);
+  const end = formatDisplayTime(displayEnd);
+  const startDay = displayStart.slice(0, 10);
+  const endDay = displayEnd.slice(0, 10);
+  if (endDay && startDay && endDay > startDay) {
+    return `${start} – ${end} (+1 day)`;
+  }
+  return `${start} – ${end}`;
+}
+
 export function addCalendarDays(day: string, delta: number): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day.trim());
   if (!m) return day;

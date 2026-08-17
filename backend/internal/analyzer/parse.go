@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"email.local/backend/internal/calendar"
 )
@@ -78,8 +79,22 @@ func ParseResult(raw string) (Result, error) {
 		result.EventStartsAt = ""
 		result.EventEndsAt = ""
 		result.Attendees = nil
+	} else {
+		fillMissingEventEnd(&result)
 	}
 	return result, nil
+}
+
+// fillMissingEventEnd defaults end to start+1h when the model found a start only.
+func fillMissingEventEnd(result *Result) {
+	if result == nil || result.EventStartsAt == "" || result.EventEndsAt != "" {
+		return
+	}
+	start, err := time.Parse(time.RFC3339, result.EventStartsAt)
+	if err != nil {
+		return
+	}
+	result.EventEndsAt = start.Add(time.Hour).UTC().Format(time.RFC3339)
 }
 
 func parseAttendeesField(raw json.RawMessage) []string {

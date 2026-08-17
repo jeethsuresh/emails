@@ -125,22 +125,37 @@ export async function contactMessages(
   );
 }
 
+export type ComposeMode = "reply" | "reply_all" | "forward";
+
 export async function composeReply(
   pb: PocketBase,
   messageId: string,
   useSuggestedReply = false,
+  mode: ComposeMode = "reply",
 ): Promise<ComposePrefill> {
   return pb.send<ComposePrefill>("/api/email/compose/reply", {
     method: "POST",
-    body: { messageId, useSuggestedReply },
+    body: { messageId, useSuggestedReply, mode },
+  });
+}
+
+export async function moveMessage(
+  pb: PocketBase,
+  messageId: string,
+  body: { folderId?: string; folderName?: string; toSpam?: boolean; createFolder?: boolean },
+): Promise<void> {
+  await pb.send(`/api/email/messages/${encodeURIComponent(messageId)}/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
   });
 }
 
 export async function sendMail(
   pb: PocketBase,
   body: SendBody,
-): Promise<{ messageId: string; threadId: string }> {
-  return pb.send<{ messageId: string; threadId: string }>("/api/email/send", {
+): Promise<{ messageId: string; threadId: string; warning?: string }> {
+  return pb.send<{ messageId: string; threadId: string; warning?: string }>("/api/email/send", {
     method: "POST",
     body,
   });

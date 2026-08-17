@@ -25,7 +25,11 @@ export function useViewport(): Viewport {
     const mqTablet = window.matchMedia(
       `(min-width: ${BREAKPOINTS.phoneMax + 1}px) and (max-width: ${BREAKPOINTS.tabletMax}px)`,
     );
-    const update = () => setVp(viewportFromWidth(window.innerWidth));
+    const update = () =>
+      setVp((prev) => {
+        const next = viewportFromWidth(window.innerWidth);
+        return prev === next ? prev : next;
+      });
     update();
     mqPhone.addEventListener("change", update);
     mqTablet.addEventListener("change", update);
@@ -41,11 +45,16 @@ export function useViewport(): Viewport {
 }
 
 export function useContentWidth(ref: { current: HTMLElement | null }): number {
-  const [w, setW] = useState(0);
+  const [w, setW] = useState(() =>
+    typeof window === "undefined" ? BREAKPOINTS.tabletMax + 1 : window.innerWidth,
+  );
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const measure = () => setW(el.clientWidth);
+    const measure = () => {
+      const next = Math.round(el.clientWidth);
+      setW((prev) => (prev === next ? prev : next));
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);

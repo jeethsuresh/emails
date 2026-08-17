@@ -2,6 +2,7 @@ package mailapi
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"email.local/backend/internal/mailstore"
@@ -9,6 +10,49 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 )
+
+func TestValidateSMTPAccountRequiresPassword(t *testing.T) {
+	app := newTestMailApp(t)
+	account := newTestAccount(t, app)
+	if err := validateSMTPAccount(account); err != nil {
+		t.Fatalf("complete account: %v", err)
+	}
+	account.Set("password", "")
+	if err := validateSMTPAccount(account); err == nil {
+		t.Fatal("expected incomplete SMTP settings without password")
+	}
+}
+
+func TestForwardSubject(t *testing.T) {
+	if got := forwardSubject("Hello"); got != "Fwd: Hello" {
+		t.Fatalf("forwardSubject = %q", got)
+	}
+	if got := forwardSubject("Fwd: Hello"); got != "Fwd: Hello" {
+		t.Fatalf("already forwarded = %q", got)
+	}
+}
+
+func TestReplyAllRecipients(t *testing.T) {
+	to, cc := replyAllRecipients(
+		"Sender <sender@example.com>",
+		"me@example.com, other@example.com",
+		"cc@example.com",
+		"me@example.com",
+	)
+	if len(to) != 1 || to[0] != "sender@example.com" {
+		t.Fatalf("to = %#v", to)
+	}
+	got := map[string]bool{}
+	for _, addr := range cc {
+		got[addr] = true
+	}
+	if !got["other@example.com"] || !got["cc@example.com"] {
+		t.Fatalf("cc = %#v", cc)
+	}
+	if got["me@example.com"] || got["sender@example.com"] {
+		t.Fatalf("cc should exclude self and primary: %#v", cc)
+	}
+}
 
 func TestReplySubject(t *testing.T) {
 	tests := map[string]string{
@@ -47,6 +91,20 @@ func TestEnvelopeRecipientsMergeToAndCc(t *testing.T) {
 	want := []string{"to@example.com", "cc@example.com"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("envelopeRecipients() = %#v, want %#v", got, want)
+	}
+}
+
+func TestMergeSuggestedReplyKeepsQuotedOriginal(t *testing.T) {
+	quoted := quoteOriginal("2026-08-13T12:00:00Z", "Sender <sender@example.com>", "first")
+	got := mergeSuggestedReply("Thanks!", quoted)
+	if !strings.HasPrefix(got, "Thanks!") {
+		t.Fatalf("missing suggestion: %q", got)
+	}
+	if !strings.Contains(got, "> first") {
+		t.Fatalf("dropped quote: %q", got)
+	}
+	if got := mergeSuggestedReply("  ", quoted); got != quoted {
+		t.Fatalf("empty suggestion should leave quote only, got %q", got)
 	}
 }
 

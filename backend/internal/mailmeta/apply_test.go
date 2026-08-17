@@ -205,6 +205,7 @@ func newMailmetaTestApp(t *testing.T) core.App {
 	}
 	collections[0].Fields.Add(&core.TextField{Name: "email"})
 	collections[1].Fields.Add(&core.TextField{Name: "name"})
+	collections[1].Fields.Add(&core.TextField{Name: "role"})
 	for _, field := range []core.Field{
 		&core.TextField{Name: "account"}, &core.TextField{Name: "folder"},
 		&core.TextField{Name: "message_id"}, &core.TextField{Name: "subject"},

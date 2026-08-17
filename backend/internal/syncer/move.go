@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"email.local/backend/internal/mailstore"
 	"email.local/backend/internal/netbridge"
 
 	"github.com/emersion/go-imap/v2"
@@ -15,9 +16,10 @@ import (
 // moveRequest is the JSON body accepted by POST /api/email/messages/{id}/move.
 // Exactly one of FolderID, FolderName, or ToSpam should be set.
 type moveRequest struct {
-	FolderID   string `json:"folderId"`
-	FolderName string `json:"folderName"`
-	ToSpam     bool   `json:"toSpam"`
+	FolderID     string `json:"folderId"`
+	FolderName   string `json:"folderName"`
+	ToSpam       bool   `json:"toSpam"`
+	CreateFolder bool   `json:"createFolder"`
 }
 
 // MoveMessage moves a cached message to a destination mailbox over IMAP
@@ -59,11 +61,11 @@ func MoveMessage(app core.App, messageID string, req moveRequest) (*core.Record,
 		return nil, nil, fmt.Errorf("source folder not found")
 	}
 
-	dstFolder, err := resolveDestFolder(app, folderCol, accountID, req)
+	dstFolder, createName, err := resolveDestFolder(app, folderCol, accountID, req)
 	if err != nil {
 		return nil, nil, err
 	}
-	if dstFolder.Id == srcFolder.Id {
+	if dstFolder != nil && dstFolder.Id == srcFolder.Id {
 		return msg, dstFolder, nil
 	}
 
@@ -95,6 +97,18 @@ func MoveMessage(app core.App, messageID string, req moveRequest) (*core.Record,
 	if err := client.Login(acc.GetString("username"), acc.GetString("password")).Wait(); err != nil {
 		return nil, nil, fmt.Errorf("imap login: %w", err)
 	}
+	if createName != "" {
+		if err := createMailboxPath(client, createName); err != nil {
+			return nil, nil, fmt.Errorf("create mailbox %q: %w", createName, err)
+		}
+		dstFolder = core.NewRecord(folderCol)
+		dstFolder.Set("account", accountID)
+		dstFolder.Set("name", createName)
+		dstFolder.Set("role", "other")
+		if err := app.Save(dstFolder); err != nil {
+			return nil, nil, fmt.Errorf("save new folder: %w", err)
+		}
+	}
 	if _, err := client.Select(srcFolder.GetString("name"), nil).Wait(); err != nil {
 		return nil, nil, fmt.Errorf("select source folder: %w", err)
 	}
@@ -118,6 +132,11 @@ func MoveMessage(app core.App, messageID string, req moveRequest) (*core.Record,
 	}
 
 	logProgress("moved message %s from %s to %s", messageID, srcFolder.GetString("name"), dstFolder.GetString("name"))
+	action := "move_to_folder"
+	if req.ToSpam {
+		action = "move_to_spam"
+	}
+	mailstore.RecordMailAction(app, messageID, action, dstFolder.GetString("name"))
 	return msg, dstFolder, nil
 }
 
@@ -138,23 +157,46 @@ func singleUID(data *imapclient.MoveData) (uint32, bool) {
 	return uint32(nums[0]), true
 }
 
-func resolveDestFolder(app core.App, folderCol *core.Collection, accountID string, req moveRequest) (*core.Record, error) {
+func resolveDestFolder(app core.App, folderCol *core.Collection, accountID string, req moveRequest) (*core.Record, string, error) {
 	switch {
 	case req.FolderID != "":
 		rec, err := app.FindRecordById(folderCol, req.FolderID)
 		if err != nil {
-			return nil, fmt.Errorf("destination folder not found")
+			return nil, "", fmt.Errorf("destination folder not found")
 		}
 		if rec.GetString("account") != accountID {
-			return nil, fmt.Errorf("destination folder belongs to a different account")
+			return nil, "", fmt.Errorf("destination folder belongs to a different account")
 		}
-		return rec, nil
+		return rec, "", nil
 	case req.ToSpam:
-		return findSpamFolder(app, accountID)
+		rec, err := findSpamFolder(app, accountID)
+		return rec, "", err
 	case strings.TrimSpace(req.FolderName) != "":
-		return findFolderByName(app, accountID, req.FolderName)
+		rec, err := findFolderByName(app, accountID, req.FolderName)
+		if err == nil {
+			return rec, "", nil
+		}
+		// folderName moves create the mailbox when nothing matches (AI Apply
+		// and explicit createFolder). Ambiguous matches still error.
+		if !strings.Contains(err.Error(), "no folder matches") {
+			return nil, "", err
+		}
+		if !req.CreateFolder {
+			return nil, "", err
+		}
+		name := strings.TrimSpace(req.FolderName)
+		name = strings.ReplaceAll(name, "\\", "/")
+		name = strings.Trim(name, "/")
+		if name == "" || strings.ContainsAny(name, "\x00\r\n") {
+			return nil, "", fmt.Errorf("invalid new folder name")
+		}
+		folders, ferr := accountFolders(app, accountID)
+		if ferr != nil {
+			return nil, "", ferr
+		}
+		return nil, qualifyNewMailboxName(folders, name), nil
 	default:
-		return nil, fmt.Errorf("must specify folderId, folderName, or toSpam")
+		return nil, "", fmt.Errorf("must specify folderId, folderName, or toSpam")
 	}
 }
 
@@ -166,11 +208,106 @@ func accountFolders(app core.App, accountID string) ([]*core.Record, error) {
 	return app.FindAllRecords(col, dbx.NewExp("account = {:a}", dbx.Params{"a": accountID}))
 }
 
-// findFolderByName matches case-insensitive equality first, falling back to
-// a substring match. It errors if zero or more than one folder matches at
-// whichever match tier is used.
+// userFolderNamespace returns the common top-level segment used by existing
+// user folders (e.g. "Folders" for Proton-style Folders/travel). Empty if none.
+func userFolderNamespace(folders []*core.Record) string {
+	counts := map[string]int{}
+	for _, f := range folders {
+		role := strings.ToLower(strings.TrimSpace(f.GetString("role")))
+		if role != "" && role != "other" {
+			continue
+		}
+		name := strings.ReplaceAll(f.GetString("name"), "\\", "/")
+		name = strings.Trim(name, "/")
+		parts := strings.Split(name, "/")
+		if len(parts) < 2 {
+			continue
+		}
+		ns := strings.TrimSpace(parts[0])
+		if ns == "" {
+			continue
+		}
+		counts[ns]++
+	}
+	best, bestN := "", 0
+	for ns, n := range counts {
+		if n > bestN {
+			best, bestN = ns, n
+		}
+	}
+	return best
+}
+
+// qualifyNewMailboxName prefixes a new mailbox with the account's user-folder
+// namespace when the server rejects top-level creates (Folders/Billing/...).
+func qualifyNewMailboxName(folders []*core.Record, name string) string {
+	return prefixMailboxWithNamespace(userFolderNamespace(folders), name)
+}
+
+// prefixMailboxWithNamespace adds ns/ when name is not already under that namespace.
+func prefixMailboxWithNamespace(ns, name string) string {
+	name = strings.ReplaceAll(strings.Trim(name, "/"), "\\", "/")
+	if name == "" || ns == "" {
+		return name
+	}
+	first, _, _ := strings.Cut(name, "/")
+	if strings.EqualFold(first, ns) {
+		return name
+	}
+	return ns + "/" + name
+}
+
+// createMailboxPath creates each path segment so nested names like
+// Billing/Subscriptions work on servers that require parents first.
+func createMailboxPath(client *imapclient.Client, name string) error {
+	name = strings.ReplaceAll(strings.Trim(name, "/"), "\\", "/")
+	if name == "" {
+		return fmt.Errorf("empty mailbox name")
+	}
+	parts := strings.Split(name, "/")
+	path := ""
+	for i, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if path == "" {
+			path = part
+		} else {
+			path = path + "/" + part
+		}
+		err := client.Create(path, nil).Wait()
+		if err == nil {
+			continue
+		}
+		// Already exists is fine for intermediate and final segments.
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "exists") || strings.Contains(msg, "already") {
+			continue
+		}
+		// Namespace parents (e.g. Folders) often reject CREATE even when they
+		// already exist; keep going for non-final segments.
+		if i < len(parts)-1 && (strings.Contains(msg, "not allowed") ||
+			strings.Contains(msg, "invalid mailbox") ||
+			strings.Contains(msg, "permission")) {
+			continue
+		}
+		// Some servers reject creating a parent that already exists as a
+		// different error; only fail hard on the final segment.
+		if i == len(parts)-1 {
+			return err
+		}
+	}
+	return nil
+}
+
+// findFolderByName matches case-insensitive equality first, then a path
+// suffix / leaf match (so "Billing/Subscriptions" finds
+// "Folders/Billing/Subscriptions"), then a unique substring match.
 func findFolderByName(app core.App, accountID, name string) (*core.Record, error) {
 	target := strings.ToLower(strings.TrimSpace(name))
+	target = strings.ReplaceAll(target, "\\", "/")
+	target = strings.Trim(target, "/")
 	if target == "" {
 		return nil, fmt.Errorf("empty folder name")
 	}
@@ -179,29 +316,74 @@ func findFolderByName(app core.App, accountID, name string) (*core.Record, error
 		return nil, err
 	}
 
-	var exact, partial []*core.Record
+	var exact, suffix, leaf, partial []*core.Record
 	for _, r := range recs {
-		n := strings.ToLower(r.GetString("name"))
-		switch {
-		case n == target:
+		n := strings.ToLower(strings.ReplaceAll(r.GetString("name"), "\\", "/"))
+		n = strings.Trim(n, "/")
+		switch folderNameMatchKind(n, target) {
+		case "exact":
 			exact = append(exact, r)
-		case strings.Contains(n, target):
+		case "suffix":
+			suffix = append(suffix, r)
+		case "leaf":
+			leaf = append(leaf, r)
+		case "partial":
 			partial = append(partial, r)
 		}
 	}
 
-	switch {
-	case len(exact) == 1:
-		return exact[0], nil
-	case len(exact) > 1:
-		return nil, fmt.Errorf("ambiguous folder name %q: %d exact matches", name, len(exact))
-	case len(partial) == 1:
-		return partial[0], nil
-	case len(partial) > 1:
-		return nil, fmt.Errorf("ambiguous folder name %q: %d partial matches", name, len(partial))
-	default:
-		return nil, fmt.Errorf("no folder matches %q", name)
+	pick := func(matches []*core.Record, kind string) (*core.Record, error) {
+		switch {
+		case len(matches) == 1:
+			return matches[0], nil
+		case len(matches) > 1:
+			return nil, fmt.Errorf("ambiguous folder name %q: %d %s matches", name, len(matches), kind)
+		default:
+			return nil, nil
+		}
 	}
+	if rec, err := pick(exact, "exact"); rec != nil || err != nil {
+		return rec, err
+	}
+	if rec, err := pick(suffix, "path"); rec != nil || err != nil {
+		return rec, err
+	}
+	if rec, err := pick(leaf, "leaf"); rec != nil || err != nil {
+		return rec, err
+	}
+	if rec, err := pick(partial, "partial"); rec != nil || err != nil {
+		return rec, err
+	}
+	return nil, fmt.Errorf("no folder matches %q", name)
+}
+
+// folderNameMatchKind classifies how a normalized folder path matches a
+// normalized target. Empty string means no match.
+func folderNameMatchKind(folder, target string) string {
+	if folder == "" || target == "" {
+		return ""
+	}
+	if folder == target {
+		return "exact"
+	}
+	if strings.HasSuffix(folder, "/"+target) {
+		return "suffix"
+	}
+	folderLeaf := folder
+	if i := strings.LastIndex(folder, "/"); i >= 0 {
+		folderLeaf = folder[i+1:]
+	}
+	targetLeaf := target
+	if i := strings.LastIndex(target, "/"); i >= 0 {
+		targetLeaf = target[i+1:]
+	}
+	if folderLeaf == targetLeaf && targetLeaf != "" {
+		return "leaf"
+	}
+	if strings.Contains(folder, target) {
+		return "partial"
+	}
+	return ""
 }
 
 // findSpamFolder looks for a spam/junk mailbox by role or name. Folder role

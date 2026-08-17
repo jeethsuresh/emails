@@ -5,7 +5,7 @@ import type { MessageAnalysis } from "../../shared/types";
 import type { ListMessage } from "../lib/messageCache";
 
 /** Fixed row height keeps virtualization cheap and stable (allows ~2–3 line clamps). */
-const ROW_HEIGHT = 108;
+const ROW_HEIGHT = 72;
 const OVERSCAN = 10;
 
 function idsKey(ids: string[]): string {
@@ -46,7 +46,10 @@ export function MessageList({
   useLayoutEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
-    const measure = () => setViewportH(el.clientHeight || 600);
+    const measure = () => {
+      const next = el.clientHeight || 600;
+      setViewportH((prev) => (prev === next ? prev : next));
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);

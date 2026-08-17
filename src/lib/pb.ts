@@ -58,7 +58,7 @@ function serializeQueryParams(query: Record<string, unknown>): string {
 }
 
 function getHeader(
-  headers: HeadersInit | undefined,
+  headers: HeadersInit | ReadonlyArray<readonly [string, string]> | undefined,
   name: string,
 ): string | null {
   if (!headers) return null;
@@ -158,14 +158,32 @@ export function createPbClient() {
     }
 
     let bodyRaw = opts.body ?? null;
-    if (
-      getHeader(opts.headers, "Content-Type") === "application/json" &&
+    const isForm =
+      typeof FormData !== "undefined" &&
       bodyRaw &&
-      typeof bodyRaw !== "string"
-    ) {
-      bodyRaw = JSON.stringify(bodyRaw);
+      (bodyRaw instanceof FormData ||
+        (typeof bodyRaw === "object" &&
+          (bodyRaw as { constructor?: { name?: string } }).constructor?.name === "FormData"));
+
+    // PocketBase's stock Client.send() adds Content-Type + JSON.stringify via
+    // initSendOptions. Our IPC override must do the same or PATCH/POST bodies
+    // arrive as opaque bytes with no Content-Type ("Unsupported Content-Type").
+    if (bodyRaw != null && !isForm && method !== "GET" && method !== "HEAD") {
+      if (!getHeader(headers, "Content-Type")) {
+        headers.push(["Content-Type", "application/json"]);
+      }
+      if (
+        getHeader(headers, "Content-Type")?.toLowerCase().includes("application/json") &&
+        typeof bodyRaw !== "string" &&
+        !(bodyRaw instanceof ArrayBuffer) &&
+        !(bodyRaw instanceof Uint8Array)
+      ) {
+        bodyRaw = JSON.stringify(bodyRaw);
+      }
     }
-    const body = asArrayBuffer(bodyRaw);
+    const body = isForm
+      ? null // FormData cannot cross IPC; callers must not send files through this path
+      : asArrayBuffer(bodyRaw);
 
     const res = await window.email.pbFetch({ method, url, headers, body });
     const responseHeaders = new Headers();

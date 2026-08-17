@@ -1,4 +1,5 @@
 import type { AnalyzerStatus, SyncStatus } from "../../shared/types";
+import { AliasFilter } from "./AliasFilter";
 import { SidebarProgress } from "./SidebarProgress";
 
 interface Folder {
@@ -16,6 +17,9 @@ export function FolderList({
   syncStatus,
   analyzerStatus,
   downloadingBody,
+  aliases,
+  selectedAlias,
+  onAliasChange,
 }: {
   folders: Folder[];
   selected: string | null;
@@ -25,6 +29,9 @@ export function FolderList({
   syncStatus: SyncStatus | null;
   analyzerStatus: AnalyzerStatus | null;
   downloadingBody: boolean;
+  aliases: Array<{ email: string; count: number }>;
+  selectedAlias: string;
+  onAliasChange: (email: string) => void;
 }) {
   return (
     <aside className="folders">
@@ -54,6 +61,7 @@ export function FolderList({
           ))}
           {folders.length === 0 && <li className="empty">No folders yet — hit Sync</li>}
         </ul>
+        <AliasFilter aliases={aliases} value={selectedAlias} onChange={onAliasChange} />
       </div>
       <SidebarProgress
         syncStatus={syncStatus}

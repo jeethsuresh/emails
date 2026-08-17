@@ -136,8 +136,49 @@ func writeHeader(raw *bytes.Buffer, name, value string) error {
 	if containsNewline(value) {
 		return fmt.Errorf("%s header contains a newline", strings.ToLower(name))
 	}
-	fmt.Fprintf(raw, "%s: %s\r\n", name, value)
+	raw.WriteString(foldHeader(name, value))
+	raw.WriteString("\r\n")
 	return nil
+}
+
+// foldHeader wraps a header at 78 octets with RFC 5322 folding whitespace so
+// Q-encoded subjects (and other long values) stay within the 998-octet limit.
+func foldHeader(name, value string) string {
+	const limit = 78
+	prefix := name + ": "
+	if len(prefix)+len(value) <= limit {
+		return prefix + value
+	}
+	var b strings.Builder
+	b.WriteString(prefix)
+	col := len(prefix)
+	remaining := value
+	for remaining != "" {
+		space := limit - col
+		if space < 1 {
+			b.WriteString("\r\n ")
+			col = 1
+			space = limit - 1
+		}
+		if len(remaining) <= space {
+			b.WriteString(remaining)
+			break
+		}
+		chunk := remaining[:space]
+		if i := strings.LastIndex(chunk, "?="); i >= 0 && i+2 <= len(remaining) {
+			chunk = remaining[:i+2]
+		}
+		if chunk == "" {
+			chunk = remaining[:1]
+		}
+		b.WriteString(chunk)
+		remaining = remaining[len(chunk):]
+		if remaining != "" {
+			b.WriteString("\r\n ")
+			col = 1
+		}
+	}
+	return b.String()
 }
 
 func containsNewline(value string) bool {

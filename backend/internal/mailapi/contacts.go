@@ -13,10 +13,10 @@ func handleContacts(re *core.RequestEvent) error {
 	query := re.Request.URL.Query()
 	q := strings.TrimSpace(query.Get("q"))
 	page, perPage := pagination(query.Get("page"), query.Get("perPage"))
-	filter := "id != ''"
+	filter := ""
 	params := dbx.Params{}
 	if q != "" {
-		filter += " && (email ~ {:q} || display_name ~ {:q})"
+		filter = "email ~ {:q} || display_name ~ {:q}"
 		params["q"] = q
 	}
 	records, err := re.App.FindRecordsByFilter("contacts", filter, "-last_message_at", perPage, (page-1)*perPage, params)

@@ -93,6 +93,18 @@ export async function saveAnalyzerSettings(
   });
 }
 
+/** Queue a message for a fresh AI analysis (clears prior result). */
+export async function reanalyzeMessage(
+  pb: PocketBase,
+  messageId: string,
+): Promise<{ ok: boolean; status: string }> {
+  return pb.send<{ ok: boolean; status: string }>("/api/email/analyzer/reanalyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: { messageId },
+  });
+}
+
 export function parseAttendeesField(raw: string | string[] | undefined | null): string[] {
   if (Array.isArray(raw)) {
     return normalizeAttendeeEmails(raw);
@@ -239,14 +251,23 @@ export function eventDetailsFromAnalysis(
   timezone: string,
 ): Partial<EventWriteInput> {
   const starts = (analysis.event_starts_at ?? "").trim();
-  const ends = (analysis.event_ends_at ?? "").trim();
+  let ends = (analysis.event_ends_at ?? "").trim();
+  let startWall = starts ? isoToWallClock(starts, timezone) : "";
+  let endWall = ends ? isoToWallClock(ends, timezone) : "";
+  if (startWall && !endWall) {
+    const startMs = Date.parse(starts);
+    if (!Number.isNaN(startMs)) {
+      ends = new Date(startMs + 60 * 60 * 1000).toISOString();
+      endWall = isoToWallClock(ends, timezone);
+    }
+  }
   return {
     title,
     calendarId,
     allDay: false,
     timezone,
-    startWall: starts ? isoToWallClock(starts, timezone) : "",
-    endWall: ends ? isoToWallClock(ends, timezone) : "",
+    startWall,
+    endWall,
     attendees: parseAttendeesField(analysis.event_attendees),
     status: "approved",
     sourceMessage: analysis.message,
@@ -311,9 +332,9 @@ export async function applyAnalysisAction(
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
       const calendarId = await defaultCalendarId(pb);
       const starts = (analysis.event_starts_at ?? "").trim();
-      const ends = (analysis.event_ends_at ?? "").trim();
       const initial = eventDetailsFromAnalysis(analysis, title, calendarId, timezone);
-      if (!starts || !ends || !initial.startWall || !initial.endWall) {
+      // Start alone is enough; end defaults to start+1h. Modal only if start missing.
+      if (!starts || !initial.startWall) {
         return {
           status: "needs_event_details",
           title,
@@ -327,8 +348,8 @@ export async function applyAnalysisAction(
         calendarId,
         allDay: false,
         timezone,
-        startWall: initial.startWall!,
-        endWall: initial.endWall!,
+        startWall: initial.startWall,
+        endWall: initial.endWall || initial.startWall,
         attendees: initial.attendees ?? [],
         status: "approved",
         sourceMessage: analysis.message,

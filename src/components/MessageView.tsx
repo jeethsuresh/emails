@@ -28,28 +28,58 @@ const ACTION_LABELS: Record<string, string> = {
   add_todo: "Add to-do",
 };
 
+function ReanalyzeOnlyButton({ onReanalyze }: { onReanalyze: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          setError(null);
+          void onReanalyze()
+            .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+            .finally(() => setBusy(false));
+        }}
+      >
+        {busy ? "Queued…" : "Re-analyze"}
+      </button>
+      {error ? <span className="error">{error}</span> : null}
+    </>
+  );
+}
+
 function AnalysisPanel({
   analysis,
   onApply,
+  onReanalyze,
 }: {
   analysis: MessageAnalysis;
   onApply: (analysis: MessageAnalysis) => Promise<void>;
+  onReanalyze?: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [reanalyzing, setReanalyzing] = useState(false);
   const [applied, setApplied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (analysis.status !== "done") return null;
-
-  const label = priorityLabel(analysis.priority);
-  const actionLabel = analysis.suggested_action
-    ? analysis.suggested_action === "move_to_folder" && analysis.create_folder
-      ? "Create folder and move"
-      : ACTION_LABELS[analysis.suggested_action]
-    : null;
+  const queued = analysis.status === "pending" || analysis.status === "running";
+  const label = analysis.status === "done" ? priorityLabel(analysis.priority) : null;
+  const actionLabel =
+    analysis.status === "done" && analysis.suggested_action
+      ? analysis.suggested_action === "move_to_folder" && analysis.create_folder
+        ? "Create folder and move"
+        : ACTION_LABELS[analysis.suggested_action]
+      : null;
 
   return (
     <section className="analysis-panel">
+      {queued ? <p className="hint">Analyzing…</p> : null}
+      {analysis.status === "skipped" ? (
+        <p className="hint">Analysis skipped{analysis.error ? `: ${analysis.error}` : ""}</p>
+      ) : null}
       {label ? (
         <span className={`priority-tag priority-${analysis.priority}`}>{label} priority</span>
       ) : null}
@@ -59,11 +89,11 @@ function AnalysisPanel({
           {analysis.action_target ? ` — ${analysis.action_target}` : ""}
         </p>
       ) : null}
-      {actionLabel ? (
-        <div className="analysis-actions">
+      <div className="analysis-actions">
+        {actionLabel ? (
           <button
             type="button"
-            disabled={busy || applied}
+            disabled={busy || applied || reanalyzing}
             onClick={() => {
               setBusy(true);
               setError(null);
@@ -78,9 +108,27 @@ function AnalysisPanel({
           >
             {busy ? "Applying…" : applied ? "Applied" : "Apply"}
           </button>
-          {error && <span className="error">{error}</span>}
-        </div>
-      ) : null}
+        ) : null}
+        {onReanalyze ? (
+          <button
+            type="button"
+            disabled={queued || reanalyzing || busy}
+            onClick={() => {
+              setReanalyzing(true);
+              setError(null);
+              setApplied(false);
+              void onReanalyze()
+                .catch((err: unknown) =>
+                  setError(err instanceof Error ? err.message : String(err)),
+                )
+                .finally(() => setReanalyzing(false));
+            }}
+          >
+            {queued || reanalyzing ? "Queued…" : "Re-analyze"}
+          </button>
+        ) : null}
+        {error ? <span className="error">{error}</span> : null}
+      </div>
     </section>
   );
 }
@@ -163,6 +211,7 @@ export function MessageView({
   analysis,
   folders = [],
   onApplyAnalysis,
+  onReanalyze,
   onCompose,
   onMoveMessage,
   onArchiveMessage,
@@ -174,6 +223,7 @@ export function MessageView({
   analysis?: MessageAnalysis;
   folders?: Folder[];
   onApplyAnalysis?: (analysis: MessageAnalysis) => Promise<void>;
+  onReanalyze?: (messageId: string) => Promise<void>;
   onCompose?: (mode: ComposeMode, useSuggestedReply?: boolean) => Promise<void>;
   onMoveMessage?: (folderId: string) => Promise<void>;
   onArchiveMessage?: () => Promise<void>;
@@ -274,10 +324,23 @@ export function MessageView({
       ) : null}
       {analysis && onApplyAnalysis ? (
         <AnalysisPanel
-          key={analysis.message}
+          key={`${analysis.message}:${analysis.status}:${analysis.analyzed_at}`}
           analysis={analysis}
           onApply={onApplyAnalysis}
+          onReanalyze={
+            onReanalyze
+              ? async () => {
+                  await onReanalyze(message.id);
+                }
+              : undefined
+          }
         />
+      ) : onReanalyze ? (
+        <section className="analysis-panel">
+          <div className="analysis-actions">
+            <ReanalyzeOnlyButton onReanalyze={() => onReanalyze(message.id)} />
+          </div>
+        </section>
       ) : null}
       {loadingBody ? (
         <p className="hint">Loading body…</p>

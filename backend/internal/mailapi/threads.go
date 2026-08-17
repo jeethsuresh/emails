@@ -36,12 +36,22 @@ func handleListThreads(re *core.RequestEvent) error {
 	}
 
 	items := make([]map[string]any, 0, len(ids))
-	for _, id := range ids {
-		record, err := re.App.FindRecordById("threads", id)
+	if len(ids) > 0 {
+		records, err := re.App.FindRecordsByIds("threads", ids)
 		if err != nil {
-			continue
+			return re.InternalServerError("list threads", err)
 		}
-		items = append(items, threadJSON(record))
+		byID := make(map[string]*core.Record, len(records))
+		for _, record := range records {
+			byID[record.Id] = record
+		}
+		for _, id := range ids {
+			record, ok := byID[id]
+			if !ok {
+				continue
+			}
+			items = append(items, threadJSON(record))
+		}
 	}
 	return re.JSON(200, pageJSON(items, page, perPage, total))
 }
@@ -49,29 +59,35 @@ func handleListThreads(re *core.RequestEvent) error {
 // findThreadIDs pages thread ids newest-first. Membership is decided by the
 // thread's messages, never by the denormalized threads.folder: a thread must
 // stay in Inbox while any Inbox message exists, even after a reply makes the
-// newest message a Sent one. The unfiltered EXISTS also keeps threads whose
-// messages have all moved away out of every listing.
+// newest message a Sent one. Ghost threads with no messages are omitted.
 func findThreadIDs(app core.App, folder, receivedFor string, page, perPage int) ([]string, int, error) {
-	where := "1 = 1"
 	params := dbx.Params{"limit": perPage, "offset": (page - 1) * perPage}
-	if folder != "" {
-		where += " AND m.folder = {:folder}"
-		params["folder"] = folder
-	}
-	if receivedFor != "" {
-		where += " AND m.received_for = {:received_for}"
-		params["received_for"] = receivedFor
-	}
-	exists := `EXISTS (
+	member := `EXISTS (
 		SELECT 1 FROM messages m
-		WHERE m.thread_id = t.id AND ` + where + `
+		WHERE m.thread_id = t.id
 	)`
+	if folder != "" || receivedFor != "" {
+		msgWhere := "m.thread_id != ''"
+		if folder != "" {
+			msgWhere += " AND m.folder = {:folder}"
+			params["folder"] = folder
+		}
+		if receivedFor != "" {
+			msgWhere += " AND m.received_for = {:received_for}"
+			params["received_for"] = receivedFor
+		}
+		// Scan matching messages first. A correlated EXISTS over every thread
+		// row cannot use the folder index and stalls the sidebar list.
+		member = `t.id IN (
+			SELECT m.thread_id FROM messages m WHERE ` + msgWhere + `
+		)`
+	}
 
 	var rows []idRow
 	if err := app.DB().NewQuery(`
 		SELECT t.id
 		FROM threads t
-		WHERE `+exists+`
+		WHERE `+member+`
 		ORDER BY t.last_date DESC
 		LIMIT {:limit} OFFSET {:offset}`,
 	).Bind(params).All(&rows); err != nil {
@@ -79,7 +95,7 @@ func findThreadIDs(app core.App, folder, receivedFor string, page, perPage int) 
 	}
 	var count countRow
 	if err := app.DB().NewQuery(
-		`SELECT COUNT(*) AS total FROM threads t WHERE ` + exists,
+		`SELECT COUNT(*) AS total FROM threads t WHERE ` + member,
 	).Bind(params).One(&count); err != nil {
 		return nil, 0, err
 	}

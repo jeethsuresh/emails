@@ -6,6 +6,7 @@ import {
   completeEventApply,
   getAnalyzerStatus,
   loadAnalysesForMessages,
+  reanalyzeMessage,
   type ApplyAnalysisResult,
 } from "./lib/analysis";
 import type { CalendarRecord, EventWriteInput } from "./lib/calendarApi";
@@ -333,6 +334,40 @@ export function App() {
       }
     },
     [pb, refreshFolders, refreshAnalyses, selectedMessage?.subject],
+  );
+
+  const reanalyze = useCallback(
+    async (messageId: string) => {
+      await reanalyzeMessage(pb, messageId);
+      setAnalysisByMessage((prev) => ({
+        ...prev,
+        [messageId]: {
+          ...(prev[messageId] ?? {
+            id: "",
+            message: messageId,
+            priority: "",
+            suggested_action: "",
+            action_target: "",
+            suggested_reply: "",
+            model: "",
+            error: "",
+            fail_count: 0,
+            analyzed_at: "",
+          }),
+          status: "pending",
+          priority: "",
+          suggested_action: "",
+          action_target: "",
+          suggested_reply: "",
+          event_starts_at: "",
+          event_ends_at: "",
+          event_attendees: "",
+          error: "",
+        },
+      }));
+      await refreshAnalyses([messageId], { includeReply: true });
+    },
+    [pb, refreshAnalyses],
   );
 
   useEffect(() => {
@@ -695,6 +730,7 @@ export function App() {
             patchSlot(msg.id, { seen: !msg.seen });
           }}
           onApplyAnalysis={applyAnalysis}
+          onReanalyze={reanalyze}
           onCompose={openCompose}
           onMoveMessage={moveSelectedMessage}
           onArchiveMessage={archiveMessage}

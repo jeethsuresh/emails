@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureDataDirs } from "./bridges/fs";
+import { ensureDataDirs, migrateLegacyDataDirs } from "./bridges/fs";
 import { BackendHost } from "./backend-host";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -20,8 +20,9 @@ function sendStatus(status: unknown) {
 }
 
 async function createWindow() {
-  const dataDir = ensureDataDirs(app.getPath("userData"));
-
+  const dataDir = ensureDataDirs();
+  migrateLegacyDataDirs(app.getPath("userData"), dataDir);
+  console.log("email data dir", dataDir.root);
   backend = new BackendHost({
     dataDir,
     assetsDir: path.join(repoRoot, "assets"),
@@ -31,10 +32,10 @@ async function createWindow() {
 
   const preloadPath = path.join(__dirname, "preload.cjs");
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 840,
-    minWidth: 900,
-    minHeight: 600,
+    width: 1100,
+    height: 720,
+    minWidth: 720,
+    minHeight: 480,
     title: "Email",
     backgroundColor: "#f3efe6",
     webPreferences: {
@@ -45,23 +46,13 @@ async function createWindow() {
     },
   });
 
-  mainWindow.webContents.on("console-message", (_e, level, message, line, sourceId) => {
-    console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
+  mainWindow.webContents.on("console-message", (event) => {
+    const level = String(event.level);
+    if (level !== "warning" && level !== "error" && level !== "2" && level !== "3") return;
+    console.log(`[renderer:${level}] ${event.message} (${event.sourceId}:${event.lineNumber})`);
   });
   mainWindow.webContents.on("did-fail-load", (_e, code, desc, url) => {
     console.error("did-fail-load", { code, desc, url });
-  });
-  mainWindow.webContents.on("did-finish-load", () => {
-    void mainWindow?.webContents
-      .executeJavaScript(
-        `({
-          href: location.href,
-          email: typeof window.email,
-          root: document.getElementById('root')?.innerHTML?.slice(0, 300) ?? null
-        })`,
-      )
-      .then((info) => console.log("renderer probe", info))
-      .catch((err) => console.error("renderer probe failed", err));
   });
 
   backend.onStatus((status) => {
@@ -73,7 +64,9 @@ async function createWindow() {
   const devUrl = process.env.VITE_DEV_SERVER_URL ?? "http://localhost:5173/";
   console.log("loading UI", { devUrl, preloadPath });
   await mainWindow.loadURL(devUrl);
-  mainWindow.webContents.openDevTools({ mode: "detach" });
+  if (process.env.EMAIL_DEVTOOLS === "1") {
+    mainWindow.webContents.openDevTools({ mode: "detach" });
+  }
 }
 
 function registerIpc() {

@@ -19,7 +19,11 @@ const (
 	sweepBatchSize     = 100
 	maxSweepBatches    = 10_000 // hard safety cap; ~1M messages worst case
 	maxFailCount       = 3
-	maxPromptBodyChars = 8_000
+	// Prefer the full message body. Only clip extremely large HTML-derived
+	// text, keeping head + tail so itinerary/details near the end survive.
+	maxPromptBodyChars = 200_000
+	promptBodyHeadKeep = 140_000
+	promptBodyTailKeep = 50_000
 )
 
 // wakeCh lets Enqueue/settings updates nudge a sleeping worker without
@@ -50,6 +54,37 @@ func Enqueue(app core.App, messageID string) {
 			return
 		}
 	}()
+}
+
+// Requeue forces a message back onto the analysis queue, clearing any prior
+// result. Used by the UI "Re-analyze" action. Synchronous so the HTTP handler
+// can report success/failure.
+func Requeue(app core.App, messageID string) error {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return fmt.Errorf("messageId required")
+	}
+
+	msgCol, err := app.FindCollectionByNameOrId("messages")
+	if err != nil {
+		return err
+	}
+	msg, err := app.FindRecordById(msgCol, messageID)
+	if err != nil {
+		return fmt.Errorf("message not found")
+	}
+
+	if excluded, err := folderExcludedForMessage(app, msg); err != nil {
+		return err
+	} else if excluded {
+		return fmt.Errorf("analysis is disabled for this folder")
+	}
+
+	if err := forcePending(app, messageID); err != nil {
+		return err
+	}
+	wake()
+	return nil
 }
 
 func enqueueNow(app core.App, messageID string) error {
@@ -131,6 +166,36 @@ func upsertPending(app core.App, messageID string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// forcePending creates or resets the message_analysis row to pending and
+// clears prior model output so a fresh completion can replace it.
+func forcePending(app core.App, messageID string) error {
+	enqueueMu.Lock()
+	defer enqueueMu.Unlock()
+
+	col, err := app.FindCollectionByNameOrId("message_analysis")
+	if err != nil {
+		return err
+	}
+	rec, err := app.FindFirstRecordByFilter(col.Id, "message = {:m}", dbx.Params{"m": messageID})
+	if err != nil {
+		rec = core.NewRecord(col)
+		rec.Set("message", messageID)
+	}
+	rec.Set("status", "pending")
+	rec.Set("fail_count", 0)
+	rec.Set("error", "")
+	rec.Set("priority", "")
+	rec.Set("suggested_action", "")
+	rec.Set("action_target", "")
+	rec.Set("suggested_reply", "")
+	rec.Set("create_folder", false)
+	rec.Set("event_starts_at", "")
+	rec.Set("event_ends_at", "")
+	rec.Set("event_attendees", "")
+	rec.Set("analyzed_at", "")
+	return app.Save(rec)
 }
 
 // Start runs the crash-recovery/backlog sweep once, then launches the
@@ -440,6 +505,20 @@ func stripHTML(s string) string {
 	return strings.TrimSpace(htmlTagRe.ReplaceAllString(s, " "))
 }
 
+// clipPromptBody returns the full body unless it exceeds maxPromptBodyChars.
+// Oversized bodies keep a large head and tail so late itinerary blocks remain.
+func clipPromptBody(body string) string {
+	if len(body) <= maxPromptBodyChars {
+		return body
+	}
+	head := promptBodyHeadKeep
+	tail := promptBodyTailKeep
+	if head+tail >= len(body) {
+		return body
+	}
+	return body[:head] + "\n...[middle truncated]...\n" + body[len(body)-tail:]
+}
+
 func buildUserPrompt(app core.App, messageID string) (string, analysisSession, error) {
 	msgCol, err := app.FindCollectionByNameOrId("messages")
 	if err != nil {
@@ -456,9 +535,7 @@ func buildUserPrompt(app core.App, messageID string) (string, analysisSession, e
 	if strings.TrimSpace(body) == "" {
 		body = stripHTML(msg.GetString("body_html"))
 	}
-	if len(body) > maxPromptBodyChars {
-		body = body[:maxPromptBodyChars] + "\n...[truncated]"
-	}
+	body = clipPromptBody(body)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Current folder: %s\n", folderName)

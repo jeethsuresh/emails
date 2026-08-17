@@ -21,11 +21,11 @@ When finished, return ONLY a JSON object with these keys:
 - "action_target": optional string (existing folder name, new folder name, event title, or todo title)
 - "create_folder": optional boolean, true only when suggested_action is move_to_folder and the folder does not already exist
 - "suggested_reply": optional string draft reply, or null/omit if not appropriate
-- "event_starts_at": optional RFC3339 start time when suggested_action is add_event and the email clearly states a start; omit if unknown (never invent)
-- "event_ends_at": optional RFC3339 end time when suggested_action is add_event and the email clearly states an end; omit if unknown (never invent)
+- "event_starts_at": optional RFC3339 start when suggested_action is add_event and you can determine a start (departure, appointment, check-in, etc.); omit only if truly unknown — do not invent dates
+- "event_ends_at": optional RFC3339 end when clearly stated (arrival, meeting end); if you have a start but no end, omit event_ends_at (the client will default to start+1h)
 - "attendees": optional array of email addresses for add_event when clearly present
 
-Only use add_event for a real meeting/appointment. If a matching event or todo already exists (see list_events_and_todos), do not suggest another. Prefer add_todo when there is a task but no clear meeting time.
+Use add_event for meetings, appointments, flights, travel itineraries, and reservations with a date/time in the email. Extract the best title and any start/end you can find (title + start alone is useful). If a matching event or todo already exists (see list_events_and_todos), do not suggest another. Prefer add_todo for tasks with no calendar date/time.
 
 Do not include markdown fences or any text outside the JSON object.`
 

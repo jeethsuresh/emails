@@ -138,7 +138,8 @@ func validateSMTPAccount(account *core.Record) error {
 	if account == nil ||
 		strings.TrimSpace(account.GetString("smtp_host")) == "" ||
 		account.GetInt("smtp_port") <= 0 ||
-		strings.TrimSpace(account.GetString("username")) == "" {
+		strings.TrimSpace(account.GetString("username")) == "" ||
+		strings.TrimSpace(account.GetString("password")) == "" {
 		return fmt.Errorf("account SMTP settings are incomplete")
 	}
 	return nil

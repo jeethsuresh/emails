@@ -36,6 +36,7 @@ npm run dev
 
 ## Notes
 
+- Local data lives under **`~/.emails/`** (`pb_data`, attachments, index). Override with `EMAIL_HOME` (Electron) or `EMAIL_DATA_DIR` (backend).
 - Dev uses a **native Go PocketBase sidecar** (`assets/email-backend`) — full PB-in-WASM hangs on nested SQLite/wazero under `GOOS=js`; the WASM build remains available via `npm run build:wasm`
 - v1 auth is IMAP/SMTP password (OAuth stubbed — see `TODO.md`)
 - Compose saves drafts locally; SMTP send + offline queue are phase-C

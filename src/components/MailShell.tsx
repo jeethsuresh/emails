@@ -2,9 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type PocketBase from "pocketbase";
 import type { AnalyzerStatus, MessageAnalysis, SyncStatus } from "../../shared/types";
 import type { ListMessage } from "../lib/messageCache";
-import type { MailThread, ThreadMessage } from "../lib/mailApi";
-import { BREAKPOINTS, type Viewport, useContentWidth } from "../lib/viewport";
-import { AliasFilter } from "./AliasFilter";
+import type { ComposeMode, MailThread, ThreadMessage } from "../lib/mailApi";
+import { type Viewport } from "../lib/viewport";
 import { ContactsView } from "./ContactsView";
 import { FolderList } from "./FolderList";
 import { MessageList } from "./MessageList";
@@ -33,6 +32,7 @@ export function MailShell({
   onSelectFolder,
   selectedAlias,
   onAliasChange,
+  aliases,
   selectedThread,
   threadMessages,
   onOpenThread,
@@ -54,7 +54,12 @@ export function MailShell({
   onToggleFlag,
   onToggleSeen,
   onApplyAnalysis,
-  onComposeReply,
+  onReanalyze,
+  onCompose,
+  onMoveMessage,
+  onArchiveMessage,
+  onSpamMessage,
+  onDeleteMessage,
   onPaneMeta,
 }: {
   pb: PocketBase;
@@ -64,6 +69,7 @@ export function MailShell({
   onSelectFolder: (id: string) => void;
   selectedAlias: string;
   onAliasChange: (email: string) => void;
+  aliases: Array<{ email: string; count: number }>;
   selectedThread: MailThread | null;
   threadMessages: ThreadMessage[];
   onOpenThread: (thread: MailThread, messages: ThreadMessage[]) => void;
@@ -85,25 +91,29 @@ export function MailShell({
   onToggleFlag: (m: ListMessage) => void;
   onToggleSeen: (m: ListMessage) => void;
   onApplyAnalysis: (a: MessageAnalysis) => void | Promise<void>;
-  onComposeReply: (messageId: string, useSuggestedReply: boolean) => Promise<void>;
+  onReanalyze: (messageId: string) => Promise<void>;
+  onCompose: (messageId: string, mode: ComposeMode, useSuggestedReply?: boolean) => Promise<void>;
+  onMoveMessage: (messageId: string, folderId: string) => Promise<void>;
+  onArchiveMessage: (messageId: string) => Promise<void>;
+  onSpamMessage: (messageId: string) => Promise<void>;
+  onDeleteMessage: (messageId: string) => Promise<void>;
   onPaneMeta?: (meta: MailPaneMeta) => void;
 }) {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const contentWidth = useContentWidth(rootRef);
   const [foldersOpen, setFoldersOpen] = useState(false);
   const [stackPane, setStackPane] = useState<MailPane>("folders");
   const [contactsOpen, setContactsOpen] = useState(false);
 
-  const stacked = viewport === "phone" || (viewport === "tablet" && contentWidth < BREAKPOINTS.tabletSplitMin);
-  const tabletSplit = viewport === "tablet" && !stacked;
+  const stacked = viewport === "phone";
+  const tabletSplit = viewport === "tablet";
   const desktop = viewport === "desktop";
 
   useEffect(() => {
     if (!stacked) return;
-    if (selectedMessage) setStackPane("reading");
-    else if (selectedFolder) setStackPane("list");
-    else setStackPane("folders");
-  }, [stacked, selectedFolder, selectedMessage]);
+    setStackPane((prev) => {
+      const next: MailPane = selectedMessage ? "reading" : selectedFolder || contactsOpen ? "list" : "folders";
+      return prev === next ? prev : next;
+    });
+  }, [stacked, selectedFolder, selectedMessage, contactsOpen]);
 
   const selectFolder = (id: string) => {
     setContactsOpen(false);
@@ -146,6 +156,8 @@ export function MailShell({
       setStackPane("folders");
     }
   }, [stackPane, clearSelectedMessage]);
+  const goBackRef = useRef(goBack);
+  goBackRef.current = goBack;
 
   const title =
     stacked && stackPane === "reading"
@@ -158,15 +170,24 @@ export function MailShell({
 
   const canBack = stacked && stackPane !== "folders";
 
+  const lastPaneMeta = useRef({ canBack: false, title: "" });
   useEffect(() => {
-    onPaneMeta?.({ canBack, title, onBack: goBack });
-  }, [canBack, title, goBack, onPaneMeta]);
+    if (lastPaneMeta.current.canBack === canBack && lastPaneMeta.current.title === title) {
+      return;
+    }
+    lastPaneMeta.current = { canBack, title };
+    onPaneMeta?.({
+      canBack,
+      title,
+      onBack: () => goBackRef.current(),
+    });
+  }, [canBack, title, onPaneMeta]);
 
   const mode = desktop ? "desktop" : tabletSplit ? "tablet-split" : "stacked";
   const pane = stacked ? stackPane : "list";
 
   return (
-    <div className={`mail-shell ${mode}`} ref={rootRef} data-pane={pane}>
+    <div className={`mail-shell ${mode}`} data-pane={pane}>
       {tabletSplit ? (
         <div className="mail-folders-toggle">
           <button type="button" onClick={() => setFoldersOpen((o) => !o)}>
@@ -192,6 +213,9 @@ export function MailShell({
           syncStatus={syncStatus}
           analyzerStatus={analyzerStatus}
           downloadingBody={downloadingBody}
+          aliases={aliases}
+          selectedAlias={selectedAlias}
+          onAliasChange={onAliasChange}
         />
       </div>
 
@@ -220,17 +244,14 @@ export function MailShell({
             onSelectMessage={selectLoadedMessage}
           />
         ) : (
-          <>
-            <AliasFilter pb={pb} value={selectedAlias} onChange={onAliasChange} />
-            <ThreadList
-              pb={pb}
-              folder={selectedFolder}
-              receivedFor={selectedAlias}
-              selectedId={selectedThread?.id ?? null}
-              refreshKey={threadRefreshKey}
-              onOpenThread={openThread}
-            />
-          </>
+          <ThreadList
+            pb={pb}
+            folder={selectedFolder}
+            receivedFor={selectedAlias}
+            selectedId={selectedThread?.id ?? null}
+            refreshKey={threadRefreshKey}
+            onOpenThread={openThread}
+          />
         )}
       </div>
 
@@ -258,14 +279,28 @@ export function MailShell({
           message={selectedMessage}
           loadingBody={loadingBody}
           analysis={selectedMessage ? analysisByMessage[selectedMessage.id] : undefined}
+          folders={folders}
           onApplyAnalysis={async (a): Promise<void> => {
             await Promise.resolve(onApplyAnalysis(a));
           }}
-          onComposeReply={
+          onReanalyze={onReanalyze}
+          onCompose={
             selectedMessage
-              ? (useSuggestedReply) =>
-                  onComposeReply(selectedMessage.id, useSuggestedReply)
+              ? (mode, useSuggestedReply) =>
+                  onCompose(selectedMessage.id, mode, useSuggestedReply)
               : undefined
+          }
+          onMoveMessage={
+            selectedMessage
+              ? (folderId) => onMoveMessage(selectedMessage.id, folderId)
+              : undefined
+          }
+          onArchiveMessage={
+            selectedMessage ? () => onArchiveMessage(selectedMessage.id) : undefined
+          }
+          onSpamMessage={selectedMessage ? () => onSpamMessage(selectedMessage.id) : undefined}
+          onDeleteMessage={
+            selectedMessage ? () => onDeleteMessage(selectedMessage.id) : undefined
           }
         />
       </div>

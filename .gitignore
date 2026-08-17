@@ -3,6 +3,7 @@ dist/
 dist-electron/
 .vite/
 backend/pb_data/
+pb_data/
 backend/native
 assets/email-backend
 *.wasm
@@ -11,3 +12,4 @@ assets/email-backend
 *.log
 release/
 backend/vendor/
+.worktrees/

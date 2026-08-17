@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	dataDir := envOr("EMAIL_DATA_DIR", filepath.Join(".", "pb_data"))
+	dataDir := envOr("EMAIL_DATA_DIR", defaultDataDir())
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		log.Fatal(err)
 	}
@@ -62,4 +62,11 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+func defaultDataDir() string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".emails", "pb_data")
+	}
+	return filepath.Join(".", "pb_data")
 }

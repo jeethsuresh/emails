@@ -56,6 +56,19 @@ func Register(app core.App) {
 			return re.JSON(200, out)
 		})
 
+		e.Router.POST("/api/email/analyzer/reanalyze", func(re *core.RequestEvent) error {
+			var body struct {
+				MessageID string `json:"messageId"`
+			}
+			if err := re.BindBody(&body); err != nil {
+				return re.BadRequestError("invalid json", err)
+			}
+			if err := Requeue(re.App, body.MessageID); err != nil {
+				return re.BadRequestError(err.Error(), err)
+			}
+			return re.JSON(200, map[string]any{"ok": true, "status": "pending"})
+		})
+
 		Start(e.App)
 		return e.Next()
 	})

@@ -24,14 +24,15 @@ export function ContactsView({
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [messagesTotal, setMessagesTotal] = useState(0);
   const [messagesPage, setMessagesPage] = useState(1);
-  const [loading, setLoading] = useState(true);
+  const [loadingContacts, setLoadingContacts] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const contactsRequestSeq = useRef(0);
   const messagesRequestSeq = useRef(0);
 
   const loadContacts = useCallback(async (nextPage: number, append: boolean) => {
     const seq = ++contactsRequestSeq.current;
-    setLoading(true);
+    setLoadingContacts(true);
     setError(null);
     try {
       const result = await listContacts(pb, undefined, nextPage);
@@ -44,7 +45,7 @@ export function ContactsView({
         setError(err instanceof Error ? err.message : String(err));
       }
     } finally {
-      if (seq === contactsRequestSeq.current) setLoading(false);
+      if (seq === contactsRequestSeq.current) setLoadingContacts(false);
     }
   }, [pb]);
 
@@ -62,7 +63,7 @@ export function ContactsView({
     append: boolean,
   ) => {
     const seq = ++messagesRequestSeq.current;
-    setLoading(true);
+    setLoadingMessages(true);
     setError(null);
     try {
       const result = await contactMessages(pb, contact.email, nextPage);
@@ -75,7 +76,7 @@ export function ContactsView({
         setError(err instanceof Error ? err.message : String(err));
       }
     } finally {
-      if (messagesRequestSeq.current === seq) setLoading(false);
+      if (messagesRequestSeq.current === seq) setLoadingMessages(false);
     }
   };
 
@@ -88,7 +89,7 @@ export function ContactsView({
   };
 
   return (
-    <section className="messages contacts-view" aria-busy={loading}>
+    <section className="messages contacts-view" aria-busy={loadingContacts || loadingMessages}>
       <h2>
         {selectedContact ? (
           <button
@@ -100,7 +101,7 @@ export function ContactsView({
               setMessages([]);
               setMessagesTotal(0);
               setMessagesPage(1);
-              setLoading(false);
+              setLoadingMessages(false);
               setError(null);
             }}
           >
@@ -112,7 +113,9 @@ export function ContactsView({
         {!selectedContact && contactsTotal > 0 ? (
           <span className="count">{contactsTotal}</span>
         ) : null}
-        {loading ? <span className="count">Loading…</span> : null}
+        {(!selectedContact && loadingContacts) || (selectedContact && loadingMessages) ? (
+          <span className="count">Loading…</span>
+        ) : null}
       </h2>
       {selectedContact ? (
         <div className="contact-heading">
@@ -123,7 +126,7 @@ export function ContactsView({
       {error ? <p className="error">{error}</p> : null}
       <div className="messages-scroll">
         {!selectedContact ? (
-          contacts.length === 0 && !loading ? (
+          contacts.length === 0 && !loadingContacts ? (
             <p className="empty">No contacts yet</p>
           ) : (
             <ul className="contact-list">
@@ -145,7 +148,7 @@ export function ContactsView({
               ))}
             </ul>
           )
-        ) : messages.length === 0 && !loading ? (
+        ) : messages.length === 0 && !loadingMessages ? (
           <p className="empty">No messages for this contact</p>
         ) : (
           <ul>
@@ -171,22 +174,22 @@ export function ContactsView({
           <button
             type="button"
             className="load-more"
-            disabled={loading}
+            disabled={loadingContacts}
             onClick={() => void loadContacts(contactsPage + 1, true)}
           >
-            {loading ? "Loading…" : "Load more contacts"}
+            {loadingContacts ? "Loading…" : "Load more contacts"}
           </button>
         ) : null}
         {selectedContact && messages.length < messagesTotal ? (
           <button
             type="button"
             className="load-more"
-            disabled={loading}
+            disabled={loadingMessages}
             onClick={() =>
               void loadContactMessages(selectedContact, messagesPage + 1, true)
             }
           >
-            {loading ? "Loading…" : "Load more messages"}
+            {loadingMessages ? "Loading…" : "Load more messages"}
           </button>
         ) : null}
       </div>

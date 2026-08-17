@@ -15,9 +15,9 @@ const (
 	maxSearchHits     = 20
 	maxSentSubjects   = 40
 	maxPriorActions   = 20
-	maxToolBodyChars  = 6_000
+	maxToolBodyChars  = 100_000
 	maxFolderList     = 200
-	maxToolResultJSON = 24_000
+	maxToolResultJSON = 120_000
 )
 
 type analysisSession struct {

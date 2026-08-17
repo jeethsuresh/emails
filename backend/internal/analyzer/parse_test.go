@@ -23,6 +23,28 @@ func TestParseResultValidJSON(t *testing.T) {
 	if got.SuggestedReply != "Thanks!" {
 		t.Fatalf("suggested_reply: got %q want %q", got.SuggestedReply, "Thanks!")
 	}
+	if got.CreateFolder {
+		t.Fatal("create_folder should default false")
+	}
+}
+
+func TestParseResultCreateFolder(t *testing.T) {
+	raw := `{"priority":"low","suggested_action":"move_to_folder","action_target":"Receipts 2026","create_folder":true}`
+	got, err := ParseResult(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.CreateFolder {
+		t.Fatal("expected create_folder")
+	}
+	raw = `{"priority":"low","suggested_action":"add_todo","action_target":"Buy milk","create_folder":true}`
+	got, err = ParseResult(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CreateFolder {
+		t.Fatal("create_folder only applies to move_to_folder")
+	}
 }
 
 func TestParseResultFencedJSON(t *testing.T) {
@@ -61,6 +83,28 @@ func TestParseResultInvalidAction(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "suggested_action") {
 		t.Fatalf("error should mention suggested_action: %v", err)
+	}
+}
+
+func TestParseResultAddEventFields(t *testing.T) {
+	raw := `{"priority":"medium","suggested_action":"add_event","action_target":"Sync","event_starts_at":"2026-08-20T15:00:00Z","event_ends_at":"2026-08-20T16:00:00Z","attendees":["a@b.com"," A@B.com "]}`
+	got, err := ParseResult(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EventStartsAt != "2026-08-20T15:00:00Z" || got.EventEndsAt != "2026-08-20T16:00:00Z" {
+		t.Fatalf("times: %#v %#v", got.EventStartsAt, got.EventEndsAt)
+	}
+	if len(got.Attendees) != 1 || got.Attendees[0] != "a@b.com" {
+		t.Fatalf("attendees: %#v", got.Attendees)
+	}
+	raw = `{"priority":"low","suggested_action":"add_todo","action_target":"X","event_starts_at":"2026-08-20T15:00:00Z","attendees":["a@b.com"]}`
+	got, err = ParseResult(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EventStartsAt != "" || len(got.Attendees) != 0 {
+		t.Fatal("event fields should clear for non-add_event")
 	}
 }
 

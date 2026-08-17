@@ -30,10 +30,17 @@ func upsertDraftFromAnalysis(app core.App, messageID string, result Result) erro
 			"deadline": "",
 		})
 	case ActionAddEvent:
-		return upsertDraftItem(app, "events", messageID, result.ActionTarget, calendar.EnsureEventDefaults(app, map[string]any{
-			"starts_at": "",
-			"ends_at":   "",
-		}))
+		fields := map[string]any{}
+		if starts := strings.TrimSpace(result.EventStartsAt); starts != "" {
+			fields["starts_at"] = starts
+		}
+		if ends := strings.TrimSpace(result.EventEndsAt); ends != "" {
+			fields["ends_at"] = ends
+		}
+		if len(result.Attendees) > 0 {
+			fields["attendees"] = calendar.EncodeAttendeesJSON(result.Attendees)
+		}
+		return upsertDraftItem(app, "events", messageID, result.ActionTarget, calendar.EnsureEventDefaults(app, fields))
 	default:
 		return nil
 	}
@@ -78,6 +85,9 @@ func upsertDraftItem(app core.App, collection, messageID, actionTarget string, e
 	}
 	draft.Set("title", title)
 	draft.Set("status", itemStatusDraft)
+	for k, v := range extras {
+		draft.Set(k, v)
+	}
 	if err := app.Save(draft); err != nil {
 		return fmt.Errorf("save %s draft: %w", collection, err)
 	}

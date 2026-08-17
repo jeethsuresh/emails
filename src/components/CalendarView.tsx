@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type PocketBase from "pocketbase";
 import { CreateEventModal } from "./CreateEventModal";
 import { CalendarManagerModal } from "./CalendarManagerModal";
@@ -108,11 +108,11 @@ export function CalendarView({ pb, active }: { pb: PocketBase; active: boolean }
   }, [active, refresh]);
 
   const shiftAnchor = (dir: number) => {
+    if (mode === "list") return;
     if (mode === "day") setAnchor((a) => addCalendarDays(a, dir));
     else if (mode === "multi") setAnchor((a) => addCalendarDays(a, dir * multiDays));
     else if (mode === "month") setAnchor((a) => addCalendarMonths(a, dir));
     else if (mode === "year") setAnchor((a) => addCalendarYears(a, dir));
-    else setAnchor((a) => addCalendarDays(a, dir * 30));
   };
 
   const openCreate = (partial?: Partial<EventWriteInput>) => {
@@ -156,6 +156,10 @@ export function CalendarView({ pb, active }: { pb: PocketBase; active: boolean }
   };
 
   const approve = async (ev: WindowEvent) => {
+    if (!(ev.startsAt ?? "").trim() || !(ev.endsAt ?? "").trim() || !(ev.title ?? "").trim()) {
+      setEditEvent(ev);
+      return;
+    }
     const baseId = ev.id.includes("#") ? ev.id.slice(0, ev.id.indexOf("#")) : ev.id;
     await pb.collection("events").update(baseId, { status: "approved" });
     await refresh();
@@ -208,15 +212,29 @@ export function CalendarView({ pb, active }: { pb: PocketBase; active: boolean }
           ) : null}
         </div>
         <div className="calendar-toolbar-right">
-          <button type="button" onClick={() => setAnchor(todayAnchorLocal())}>
+          <button
+            type="button"
+            onClick={() => {
+              const today = todayAnchorLocal();
+              setAnchor(today);
+              if (mode === "list") {
+                const el = document.querySelector(`[data-cal-day="${today}"]`);
+                el?.scrollIntoView({ block: "start", behavior: "smooth" });
+              }
+            }}
+          >
             Today
           </button>
-          <button type="button" aria-label="Previous" onClick={() => shiftAnchor(-1)}>
-            ‹
-          </button>
-          <button type="button" aria-label="Next" onClick={() => shiftAnchor(1)}>
-            ›
-          </button>
+          {mode !== "list" ? (
+            <>
+              <button type="button" aria-label="Previous" onClick={() => shiftAnchor(-1)}>
+                ‹
+              </button>
+              <button type="button" aria-label="Next" onClick={() => shiftAnchor(1)}>
+                ›
+              </button>
+            </>
+          ) : null}
           <span className="calendar-anchor">{formatDisplayDayLabel(anchor)}</span>
           <label className="calendar-tz">
             TZ
@@ -289,6 +307,7 @@ export function CalendarView({ pb, active }: { pb: PocketBase; active: boolean }
           {mode === "list" ? (
             <CalendarList
               events={events}
+              scrollToDay={todayAnchorLocal()}
               onEdit={setEditEvent}
               onApprove={(ev) => void approve(ev)}
               onDismiss={(ev) => void dismiss(ev)}
@@ -369,31 +388,54 @@ export function CalendarView({ pb, active }: { pb: PocketBase; active: boolean }
 
 function CalendarList({
   events,
+  scrollToDay,
   onEdit,
   onApprove,
   onDismiss,
 }: {
   events: WindowEvent[];
+  scrollToDay: string;
   onEdit: (ev: WindowEvent) => void;
   onApprove: (ev: WindowEvent) => void;
   onDismiss: (ev: WindowEvent) => void;
 }) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const groups = useMemo(() => {
     const map = new Map<string, WindowEvent[]>();
     for (const ev of events) {
-      const day = ev.allDay ? ev.displayStart.slice(0, 10) : ev.displayDay || "unknown";
+      let day = ev.allDay ? ev.displayStart.slice(0, 10) : ev.displayDay;
+      if (!day) day = "undated";
       const list = map.get(day) ?? [];
       list.push(ev);
       map.set(day, list);
     }
-    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    return [...map.entries()].sort((a, b) => {
+      if (a[0] === "undated") return 1;
+      if (b[0] === "undated") return -1;
+      return a[0].localeCompare(b[0]);
+    });
   }, [events]);
 
+  useEffect(() => {
+    const root = scrollerRef.current;
+    if (!root || !scrollToDay) return;
+    const target =
+      root.querySelector(`[data-cal-day="${scrollToDay}"]`) ??
+      [...root.querySelectorAll<HTMLElement>("[data-cal-day]")].find((el) => {
+        const day = el.dataset.calDay ?? "";
+        return day !== "undated" && day >= scrollToDay;
+      });
+    if (!target) return;
+    // Past days stay above the fold; pin today (or next upcoming) to the top.
+    const top = target.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
+    root.scrollTop = Math.max(0, top);
+  }, [groups, scrollToDay]);
+
   return (
-    <div className="calendar-list-grouped">
+    <div className="calendar-list-grouped" ref={scrollerRef}>
       {groups.map(([day, items]) => (
-        <section key={day} className="calendar-list-day">
-          <h3>{day === "unknown" ? "No date" : formatDisplayDayLabel(day)}</h3>
+        <section key={day} className="calendar-list-day" data-cal-day={day}>
+          <h3>{day === "undated" ? "No date" : formatDisplayDayLabel(day)}</h3>
           <ul className="calendar-list">
             {items.map((ev) => {
               const draft = ev.status === "draft";
@@ -409,9 +451,11 @@ function CalendarList({
                     {ev.title || "(untitled)"}
                   </strong>
                     <span className="muted">
-                      {ev.allDay
-                        ? "All day"
-                        : `${formatDisplayTime(ev.displayStart)} – ${formatDisplayTime(ev.displayEnd)}`}
+                      {day === "undated"
+                        ? "No time set"
+                        : ev.allDay
+                          ? "All day"
+                          : `${formatDisplayTime(ev.displayStart)} – ${formatDisplayTime(ev.displayEnd)}`}
                     </span>
                   </button>
                   {draft ? (
@@ -430,7 +474,7 @@ function CalendarList({
           </ul>
         </section>
       ))}
-      {events.length === 0 ? <p className="empty">No events in this range.</p> : null}
+      {events.length === 0 ? <p className="empty">No events yet.</p> : null}
     </div>
   );
 }

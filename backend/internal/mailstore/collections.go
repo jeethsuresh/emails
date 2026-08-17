@@ -135,6 +135,10 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.TextField{Name: "suggested_action"})
 			c.Fields.Add(&core.TextField{Name: "action_target"})
 			c.Fields.Add(&core.TextField{Name: "suggested_reply", Max: 100_000})
+			c.Fields.Add(&core.BoolField{Name: "create_folder"})
+			c.Fields.Add(&core.TextField{Name: "event_starts_at"})
+			c.Fields.Add(&core.TextField{Name: "event_ends_at"})
+			c.Fields.Add(&core.TextField{Name: "event_attendees", Max: 20_000})
 			c.Fields.Add(&core.TextField{Name: "model"})
 			c.Fields.Add(&core.TextField{Name: "error"})
 			c.Fields.Add(&core.NumberField{Name: "fail_count"})
@@ -142,6 +146,17 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
 			c.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
 			c.AddIndex(messageAnalysisMessageUniqueIndex, true, "`message`", "")
+		}},
+		{"mail_actions", func(c *core.Collection) {
+			c.Fields.Add(&core.TextField{Name: "message"})
+			c.Fields.Add(&core.TextField{Name: "from_addr"})
+			c.Fields.Add(&core.TextField{Name: "received_for"})
+			c.Fields.Add(&core.TextField{Name: "action"})
+			c.Fields.Add(&core.TextField{Name: "target"})
+			c.Fields.Add(&core.TextField{Name: "created_at"})
+			c.AddIndex("idx_mail_actions_from", false, "`from_addr`,`created_at`", "")
+			c.AddIndex("idx_mail_actions_recv", false, "`received_for`,`created_at`", "")
+			c.AddIndex("idx_mail_actions_message", false, "`message`", "")
 		}},
 		{"app_settings", func(c *core.Collection) {
 			c.Fields.Add(&core.TextField{Name: "llm_model"})
@@ -180,6 +195,7 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.TextField{Name: "etag"})
 			c.Fields.Add(&core.TextField{Name: "rrule"})
 			c.Fields.Add(&core.TextField{Name: "exdate"})
+			c.Fields.Add(&core.TextField{Name: "attendees", Max: 20_000})
 		}},
 		{"todos", func(c *core.Collection) {
 			c.Fields.Add(&core.TextField{Name: "title"})
@@ -187,7 +203,7 @@ func ensureCollections(app core.App) error {
 			c.Fields.Add(&core.TextField{Name: "source_message"})
 			c.Fields.Add(&core.TextField{Name: "created_at"})
 			c.Fields.Add(&core.TextField{Name: "deadline"})
-			c.Fields.Add(&core.TextField{Name: "status"}) // draft | approved
+			c.Fields.Add(&core.TextField{Name: "status"}) // draft | approved | completed
 		}},
 	}
 
@@ -340,13 +356,17 @@ func ensureLLMAnalysisSchemaFields(app core.App) error {
 		&core.TextField{Name: "suggested_action"},
 		&core.TextField{Name: "action_target"},
 		&core.TextField{Name: "suggested_reply", Max: 100_000},
+		&core.BoolField{Name: "create_folder"},
+		&core.TextField{Name: "event_starts_at"},
+		&core.TextField{Name: "event_ends_at"},
+		&core.TextField{Name: "event_attendees", Max: 20_000},
 		&core.TextField{Name: "model"},
 		&core.TextField{Name: "error"},
 		&core.NumberField{Name: "fail_count"},
 		&core.TextField{Name: "analyzed_at"},
 		&core.AutodateField{Name: "created", OnCreate: true},
 		&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true},
-	}, map[string]int{"suggested_reply": 100_000}); err != nil {
+	}, map[string]int{"suggested_reply": 100_000, "event_attendees": 20_000}); err != nil {
 		return err
 	}
 	if err := ensureMessageAnalysisUniqueIndex(app); err != nil {
@@ -393,7 +413,8 @@ func ensureLLMAnalysisSchemaFields(app core.App) error {
 		&core.TextField{Name: "etag"},
 		&core.TextField{Name: "rrule"},
 		&core.TextField{Name: "exdate"},
-	}, map[string]int{"notes": 20_000}); err != nil {
+		&core.TextField{Name: "attendees", Max: 20_000},
+	}, map[string]int{"notes": 20_000, "attendees": 20_000}); err != nil {
 		return err
 	}
 	if err := ensure("todos", []core.Field{
@@ -404,6 +425,16 @@ func ensureLLMAnalysisSchemaFields(app core.App) error {
 		&core.TextField{Name: "deadline"},
 		&core.TextField{Name: "status"},
 	}, map[string]int{"notes": 20_000}); err != nil {
+		return err
+	}
+	if err := ensure("mail_actions", []core.Field{
+		&core.TextField{Name: "message"},
+		&core.TextField{Name: "from_addr"},
+		&core.TextField{Name: "received_for"},
+		&core.TextField{Name: "action"},
+		&core.TextField{Name: "target"},
+		&core.TextField{Name: "created_at"},
+	}, nil); err != nil {
 		return err
 	}
 	if err := backfillDraftStatusApproved(app); err != nil {
@@ -694,6 +725,9 @@ func ensureMailIndexes(app core.App) error {
 	if err := addIdx(msg, "idx_messages_thread_date", "`thread_id`,`date`"); err != nil {
 		return err
 	}
+	if err := addIdx(msg, "idx_messages_folder_thread", "`folder`,`thread_id`"); err != nil {
+		return err
+	}
 	if err := addIdx(msg, "idx_messages_received_for_date", "`received_for`,`date`"); err != nil {
 		return err
 	}
@@ -717,6 +751,17 @@ func ensureMailIndexes(app core.App) error {
 	if ct.GetIndex("idx_contacts_email") == "" {
 		ct.AddIndex("idx_contacts_email", true, "`email`", "")
 		if err := app.Save(ct); err != nil {
+			return err
+		}
+	}
+	if actions, err := app.FindCollectionByNameOrId("mail_actions"); err == nil {
+		if err := addIdx(actions, "idx_mail_actions_from", "`from_addr`,`created_at`"); err != nil {
+			return err
+		}
+		if err := addIdx(actions, "idx_mail_actions_recv", "`received_for`,`created_at`"); err != nil {
+			return err
+		}
+		if err := addIdx(actions, "idx_mail_actions_message", "`message`"); err != nil {
 			return err
 		}
 	}

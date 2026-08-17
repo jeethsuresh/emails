@@ -11,16 +11,27 @@ import (
 )
 
 const (
-	analysisSystemPrompt = `You analyze email messages. Return ONLY a JSON object with these keys:
+	analysisSystemPrompt = `You analyze email messages for a personal mail client.
+
+You may call tools to inspect related mail, and list_events_and_todos to avoid suggesting duplicate events or todos (including drafts). Prefer existing folders; do not invent a new folder unless none of the listed folders is a reasonable fit. If you recommend creating a folder, set create_folder to true and put the new folder name in action_target.
+
+When finished, return ONLY a JSON object with these keys:
 - "priority": exactly one of "high", "medium", "low"
 - "suggested_action": exactly one of "move_to_folder", "move_to_spam", "add_event", "add_todo"
-- "action_target": optional string (folder name, event title, todo title, etc.)
+- "action_target": optional string (existing folder name, new folder name, event title, or todo title)
+- "create_folder": optional boolean, true only when suggested_action is move_to_folder and the folder does not already exist
 - "suggested_reply": optional string draft reply, or null/omit if not appropriate
+- "event_starts_at": optional RFC3339 start time when suggested_action is add_event and the email clearly states a start; omit if unknown (never invent)
+- "event_ends_at": optional RFC3339 end time when suggested_action is add_event and the email clearly states an end; omit if unknown (never invent)
+- "attendees": optional array of email addresses for add_event when clearly present
+
+Only use add_event for a real meeting/appointment. If a matching event or todo already exists (see list_events_and_todos), do not suggest another. Prefer add_todo when there is a task but no clear meeting time.
 
 Do not include markdown fences or any text outside the JSON object.`
 
-	chatTimeout   = 60 * time.Second
+	chatTimeout   = 120 * time.Second
 	modelsTimeout = 5 * time.Second
+	maxToolRounds = 6
 )
 
 // AnalysisSystemPrompt is the default system prompt for email analysis completions.
@@ -36,18 +47,33 @@ type chatRequest struct {
 	Model       string        `json:"model"`
 	Messages    []chatMessage `json:"messages"`
 	Temperature float64       `json:"temperature"`
+	Tools       []openaiTool  `json:"tools,omitempty"`
 }
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content,omitempty"`
+	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Name       string     `json:"name,omitempty"`
+}
+
+type toolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
 }
 
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string     `json:"content"`
+			ToolCalls []toolCall `json:"tool_calls"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 }
 
@@ -88,55 +114,124 @@ func ListModels(baseURL string) ([]ModelInfo, error) {
 }
 
 func ChatJSON(baseURL, model, system, user string) (string, error) {
-	url, err := joinURL(baseURL, "/v1/chat/completions")
+	return chatCompletion(baseURL, model, []chatMessage{
+		{Role: "system", Content: systemOrDefault(system)},
+		{Role: "user", Content: user},
+	}, nil)
+}
+
+func ChatWithTools(baseURL, model string, session analysisSession, userPrompt string) (string, error) {
+	messages := []chatMessage{
+		{Role: "system", Content: AnalysisSystemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+	tools := analysisTools()
+	for round := 0; round < maxToolRounds; round++ {
+		content, calls, err := chatCompletionTools(baseURL, model, messages, tools)
+		if err != nil {
+			if round == 0 && looksLikeToolsUnsupported(err) {
+				return ChatJSON(baseURL, model, AnalysisSystemPrompt, userPrompt)
+			}
+			return "", err
+		}
+		if len(calls) == 0 {
+			if strings.TrimSpace(content) == "" {
+				return "", fmt.Errorf("chat completion: empty assistant content")
+			}
+			return content, nil
+		}
+		messages = append(messages, chatMessage{Role: "assistant", Content: content, ToolCalls: calls})
+		for _, call := range calls {
+			id := call.ID
+			if id == "" {
+				id = fmt.Sprintf("call_%d", round)
+			}
+			messages = append(messages, chatMessage{
+				Role:       "tool",
+				Name:       call.Function.Name,
+				ToolCallID: id,
+				Content:    runAnalysisTool(session, call.Function.Name, call.Function.Arguments),
+			})
+		}
+	}
+	messages = append(messages, chatMessage{
+		Role:    "user",
+		Content: "Stop calling tools. Return the final JSON object now.",
+	})
+	return chatCompletion(baseURL, model, messages, nil)
+}
+
+func systemOrDefault(system string) string {
+	if strings.TrimSpace(system) == "" {
+		return AnalysisSystemPrompt
+	}
+	return system
+}
+
+func looksLikeToolsUnsupported(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "tool") && (strings.Contains(msg, "400") || strings.Contains(msg, "unsupported") || strings.Contains(msg, "unknown"))
+}
+
+func chatCompletionTools(baseURL, model string, messages []chatMessage, tools []openaiTool) (string, []toolCall, error) {
+	parsed, err := postChat(baseURL, model, messages, tools)
+	if err != nil {
+		return "", nil, err
+	}
+	msg := parsed.Choices[0].Message
+	return strings.TrimSpace(msg.Content), msg.ToolCalls, nil
+}
+
+func chatCompletion(baseURL, model string, messages []chatMessage, tools []openaiTool) (string, error) {
+	parsed, err := postChat(baseURL, model, messages, tools)
 	if err != nil {
 		return "", err
 	}
-
-	if strings.TrimSpace(system) == "" {
-		system = AnalysisSystemPrompt
-	}
-
-	payload, err := json.Marshal(chatRequest{
-		Model: model,
-		Messages: []chatMessage{
-			{Role: "system", Content: system},
-			{Role: "user", Content: user},
-		},
-		Temperature: 0.2,
-	})
-	if err != nil {
-		return "", fmt.Errorf("encode chat request: %w", err)
-	}
-
-	client := &http.Client{Timeout: chatTimeout}
-	resp, err := client.Post(url, "application/json", bytes.NewReader(payload))
-	if err != nil {
-		return "", fmt.Errorf("chat completion: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read chat response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("chat completion: HTTP %d: %s", resp.StatusCode, trimBody(body))
-	}
-
-	var parsed chatResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", fmt.Errorf("decode chat response: %w", err)
-	}
-	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("chat completion: empty choices")
-	}
-
 	content := strings.TrimSpace(parsed.Choices[0].Message.Content)
 	if content == "" {
 		return "", fmt.Errorf("chat completion: empty assistant content")
 	}
 	return content, nil
+}
+
+func postChat(baseURL, model string, messages []chatMessage, tools []openaiTool) (*chatResponse, error) {
+	url, err := joinURL(baseURL, "/v1/chat/completions")
+	if err != nil {
+		return nil, err
+	}
+	payload, err := json.Marshal(chatRequest{
+		Model:       model,
+		Messages:    messages,
+		Temperature: 0.2,
+		Tools:       tools,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode chat request: %w", err)
+	}
+
+	client := &http.Client{Timeout: chatTimeout}
+	resp, err := client.Post(url, "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("chat completion: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read chat response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("chat completion: HTTP %d: %s", resp.StatusCode, trimBody(body))
+	}
+
+	var parsed chatResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("decode chat response: %w", err)
+	}
+	if len(parsed.Choices) == 0 {
+		return nil, fmt.Errorf("chat completion: empty choices")
+	}
+	return &parsed, nil
 }
 
 func Reachable(baseURL string) bool {

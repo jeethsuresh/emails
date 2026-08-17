@@ -8,6 +8,11 @@ import {
   type WindowEvent,
   updateCalendarEvent,
 } from "../lib/calendarApi";
+import { parseAttendeesField } from "../lib/analysis";
+
+function attendeesToText(emails: string[] | undefined): string {
+  return (emails ?? []).join(", ");
+}
 
 export function CreateEventModal({
   pb,
@@ -17,6 +22,7 @@ export function CreateEventModal({
   edit,
   calendars,
   defaultTimezone,
+  saveEvent,
 }: {
   pb: PocketBase;
   onClose: () => void;
@@ -25,6 +31,8 @@ export function CreateEventModal({
   edit?: WindowEvent | null;
   calendars: CalendarRecord[];
   defaultTimezone: string;
+  /** When set, used instead of the default create/update path (e.g. AI Apply). */
+  saveEvent?: (body: EventWriteInput) => Promise<void>;
 }) {
   const defaultCal =
     calendars.find((c) => c.is_default)?.id ?? calendars[0]?.id ?? "";
@@ -43,6 +51,9 @@ export function CreateEventModal({
   const [endWall, setEndWall] = useState(
     initial?.endWall ?? (edit ? edit.editEndWall : "") ?? "",
   );
+  const [attendeesText, setAttendeesText] = useState(
+    attendeesToText(initial?.attendees ?? edit?.attendees),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,21 +64,36 @@ export function CreateEventModal({
     }
   }, [calendarId, calendars, edit]);
 
+  const buildBody = (): EventWriteInput | null => {
+    const trimmed = title.trim();
+    const start = startWall.trim();
+    const end = endWall.trim();
+    if (!trimmed || !start || !end) {
+      setError("Title, start, and end are required");
+      return null;
+    }
+    return {
+      title: trimmed,
+      notes: notes.trim(),
+      calendarId,
+      allDay,
+      timezone,
+      startWall: start,
+      endWall: end,
+      attendees: parseAttendeesField(attendeesText),
+      status: edit?.status === "draft" ? "draft" : (initial?.status ?? "approved"),
+      sourceMessage: initial?.sourceMessage,
+    };
+  };
+
   const approveDraft = async () => {
     if (!edit?.id) return;
+    const body = buildBody();
+    if (!body) return;
     setBusy(true);
     setError(null);
     try {
-      await updateCalendarEvent(pb, edit.id, {
-        title: title.trim() || edit.title,
-        notes: notes.trim(),
-        calendarId,
-        allDay,
-        timezone,
-        startWall: startWall.trim() || edit.editStartWall,
-        endWall: (endWall.trim() || startWall.trim() || edit.editEndWall),
-        status: "approved",
-      });
+      await updateCalendarEvent(pb, edit.id, { ...body, status: "approved" });
       onSaved();
       onClose();
     } catch (err) {
@@ -95,34 +121,31 @@ export function CreateEventModal({
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const trimmed = title.trim();
-    if (!trimmed || !startWall.trim()) return;
+    const body = buildBody();
+    if (!body) return;
     setBusy(true);
     setError(null);
     try {
-      const body: EventWriteInput = {
-        title: trimmed,
-        notes: notes.trim(),
-        calendarId,
-        allDay,
-        timezone,
-        startWall: startWall.trim(),
-        endWall: (endWall.trim() || startWall.trim()),
-        status: edit?.status === "draft" ? "draft" : "approved",
-      };
-      if (edit?.id) {
+      if (saveEvent) {
+        await saveEvent(body);
+        onSaved();
+      } else if (edit?.id) {
         await updateCalendarEvent(pb, edit.id, body);
+        onSaved();
+        onClose();
       } else {
         await createCalendarEvent(pb, body);
+        onSaved();
+        onClose();
       }
-      onSaved();
-      onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
   };
+
+  const canSave = Boolean(title.trim() && startWall.trim() && endWall.trim());
 
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
@@ -200,6 +223,15 @@ export function CreateEventModal({
             type={allDay ? "date" : "datetime-local"}
             value={endWall}
             onChange={(e) => setEndWall(e.target.value)}
+            required
+          />
+        </label>
+        <label>
+          Attendees
+          <input
+            value={attendeesText}
+            onChange={(e) => setAttendeesText(e.target.value)}
+            placeholder="Optional emails, comma-separated"
           />
         </label>
         <label>
@@ -218,7 +250,7 @@ export function CreateEventModal({
               <button type="button" className="danger" disabled={busy} onClick={() => void dismissDraft()}>
                 Dismiss
               </button>
-              <button type="button" disabled={busy} onClick={() => void approveDraft()}>
+              <button type="button" disabled={busy || !canSave} onClick={() => void approveDraft()}>
                 Approve
               </button>
             </>
@@ -226,12 +258,12 @@ export function CreateEventModal({
           <button type="button" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" disabled={busy || !title.trim() || !startWall.trim()}>
+          <button type="submit" disabled={busy || !canSave}>
             {busy ? "Saving…" : edit ? "Save" : "Add event"}
           </button>
         </div>
         <p className="hint modal-hint">
-          Times are wall clocks in the event timezone; the server converts to UTC.
+          Title, start, and end are required. Times are wall clocks in the event timezone.
         </p>
       </form>
     </div>

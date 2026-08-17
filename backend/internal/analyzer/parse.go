@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"email.local/backend/internal/calendar"
 )
 
 type Priority string
@@ -27,14 +29,22 @@ type Result struct {
 	Priority        Priority
 	SuggestedAction SuggestedAction
 	ActionTarget    string
+	CreateFolder    bool
 	SuggestedReply  string
+	EventStartsAt   string
+	EventEndsAt     string
+	Attendees       []string
 }
 
 type rawResult struct {
 	Priority        Priority        `json:"priority"`
 	SuggestedAction SuggestedAction `json:"suggested_action"`
 	ActionTarget    string          `json:"action_target"`
+	CreateFolder    bool            `json:"create_folder"`
 	SuggestedReply  *string         `json:"suggested_reply"`
+	EventStartsAt   string          `json:"event_starts_at"`
+	EventEndsAt     string          `json:"event_ends_at"`
+	Attendees       json.RawMessage `json:"attendees"`
 }
 
 func ParseResult(raw string) (Result, error) {
@@ -55,12 +65,39 @@ func ParseResult(raw string) (Result, error) {
 	result := Result{
 		Priority:        parsed.Priority,
 		SuggestedAction: parsed.SuggestedAction,
-		ActionTarget:    parsed.ActionTarget,
+		ActionTarget:    strings.TrimSpace(parsed.ActionTarget),
+		CreateFolder:    parsed.CreateFolder && parsed.SuggestedAction == ActionMoveToFolder,
+		EventStartsAt:   strings.TrimSpace(parsed.EventStartsAt),
+		EventEndsAt:     strings.TrimSpace(parsed.EventEndsAt),
+		Attendees:       parseAttendeesField(parsed.Attendees),
 	}
 	if parsed.SuggestedReply != nil {
 		result.SuggestedReply = *parsed.SuggestedReply
 	}
+	if result.SuggestedAction != ActionAddEvent {
+		result.EventStartsAt = ""
+		result.EventEndsAt = ""
+		result.Attendees = nil
+	}
 	return result, nil
+}
+
+func parseAttendeesField(raw json.RawMessage) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var asList []string
+	if err := json.Unmarshal(raw, &asList); err == nil {
+		return calendar.NormalizeAttendeesEmails(asList)
+	}
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err == nil {
+		parts := strings.FieldsFunc(asString, func(r rune) bool {
+			return r == ',' || r == ';' || r == '\n' || r == '\r'
+		})
+		return calendar.NormalizeAttendeesEmails(parts)
+	}
+	return nil
 }
 
 func stripJSONFence(raw string) string {

@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"email.local/backend/internal/calendar"
+
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -363,14 +365,14 @@ func processMessage(app core.App, rec *core.Record, baseURL, model string, depth
 		}
 	})
 
-	prompt, err := buildUserPrompt(app, messageID)
+	prompt, session, err := buildUserPrompt(app, messageID)
 	if err != nil {
 		logProgress("build prompt for %s: %v", messageID, err)
 		recordParseFailure(app, rec, err)
 		return
 	}
 
-	content, err := ChatJSON(baseURL, model, AnalysisSystemPrompt, prompt)
+	content, err := ChatWithTools(baseURL, model, session, prompt)
 	if err != nil {
 		// Transport/connectivity failure: put the message back in the queue
 		// and let the top of the loop re-enter the pause/poll path.
@@ -396,7 +398,11 @@ func processMessage(app core.App, rec *core.Record, baseURL, model string, depth
 	rec.Set("priority", string(result.Priority))
 	rec.Set("suggested_action", string(result.SuggestedAction))
 	rec.Set("action_target", result.ActionTarget)
+	rec.Set("create_folder", result.CreateFolder)
 	rec.Set("suggested_reply", result.SuggestedReply)
+	rec.Set("event_starts_at", result.EventStartsAt)
+	rec.Set("event_ends_at", result.EventEndsAt)
+	rec.Set("event_attendees", calendar.EncodeAttendeesJSON(result.Attendees))
 	rec.Set("model", model)
 	rec.Set("status", "done")
 	rec.Set("error", "")
@@ -434,25 +440,18 @@ func stripHTML(s string) string {
 	return strings.TrimSpace(htmlTagRe.ReplaceAllString(s, " "))
 }
 
-func buildUserPrompt(app core.App, messageID string) (string, error) {
+func buildUserPrompt(app core.App, messageID string) (string, analysisSession, error) {
 	msgCol, err := app.FindCollectionByNameOrId("messages")
 	if err != nil {
-		return "", err
+		return "", analysisSession{}, err
 	}
 	msg, err := app.FindRecordById(msgCol, messageID)
 	if err != nil {
-		return "", fmt.Errorf("message not found: %w", err)
+		return "", analysisSession{}, fmt.Errorf("message not found: %w", err)
 	}
+	session := newSession(app, msg)
 
-	folderName := ""
-	if folderID := msg.GetString("folder"); folderID != "" {
-		if folderCol, err := app.FindCollectionByNameOrId("folders"); err == nil {
-			if folder, err := app.FindRecordById(folderCol, folderID); err == nil {
-				folderName = folder.GetString("name")
-			}
-		}
-	}
-
+	folderName := folderNameByID(app, msg.GetString("folder"))
 	body := msg.GetString("body_text")
 	if strings.TrimSpace(body) == "" {
 		body = stripHTML(msg.GetString("body_html"))
@@ -462,11 +461,32 @@ func buildUserPrompt(app core.App, messageID string) (string, error) {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Folder: %s\n", folderName)
+	fmt.Fprintf(&b, "Current folder: %s\n", folderName)
 	fmt.Fprintf(&b, "From: %s\n", msg.GetString("from_addr"))
 	fmt.Fprintf(&b, "To: %s\n", msg.GetString("to_addrs"))
+	fmt.Fprintf(&b, "Received for: %s\n", msg.GetString("received_for"))
 	fmt.Fprintf(&b, "Date: %s\n", msg.GetString("date"))
 	fmt.Fprintf(&b, "Subject: %s\n\n", msg.GetString("subject"))
 	b.WriteString(body)
-	return b.String(), nil
+	b.WriteString("\n\nExisting folders (prefer these; create a new folder only if none fit):\n")
+	for _, name := range listFolderNames(session) {
+		fmt.Fprintf(&b, "- %s\n", name)
+	}
+	b.WriteString("\nSubjects this user has sent (use get_sent_email_body with the id to read a body):\n")
+	sent := listSentSubjects(session)
+	if len(sent) == 0 {
+		b.WriteString("(none)\n")
+	}
+	for _, row := range sent {
+		fmt.Fprintf(&b, "- id=%s date=%s subject=%s\n", row.ID, row.Date, row.Subject)
+	}
+	b.WriteString("\nPrevious actions for this sender or receiving address (use get_message_actions for one email):\n")
+	actions := listPriorActions(session)
+	if len(actions) == 0 {
+		b.WriteString("(none recorded)\n")
+	}
+	for _, row := range actions {
+		fmt.Fprintf(&b, "- message=%s action=%s target=%s when=%s\n", row.Message, row.Action, row.Target, row.When)
+	}
+	return b.String(), session, nil
 }

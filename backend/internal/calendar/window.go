@@ -26,9 +26,10 @@ type WindowEvent struct {
 	DisplayDay    string `json:"displayDay"`    // YYYY-MM-DD in display TZ (timed start day / all-day start)
 	EditStartWall string `json:"editStartWall"` // wall clock in event timezone (for forms)
 	EditEndWall   string `json:"editEndWall"`
-	Lane          int    `json:"lane"`
-	LaneCount     int    `json:"laneCount"`
-	UID           string `json:"uid"`
+	Lane          int      `json:"lane"`
+	LaneCount     int      `json:"laneCount"`
+	UID           string   `json:"uid"`
+	Attendees     []string `json:"attendees"`
 }
 
 type WindowResponse struct {
@@ -135,9 +136,12 @@ func handleGetBounds(re *core.RequestEvent) error {
 		fromLocal = time.Date(y, 1, 1, 0, 0, 0, 0, loc)
 		toLocal = time.Date(y+1, 1, 1, 0, 0, 0, 0, loc)
 	case "list":
+		// Wide past/future range so list view is a scrollable agenda, not a
+		// short timeline window. Past events sit above "today" in the UI.
 		y, m, d := anchorLocal.Date()
-		fromLocal = time.Date(y, m, d, 0, 0, 0, 0, loc).AddDate(0, 0, -30)
-		toLocal = fromLocal.AddDate(0, 0, 90)
+		dayStart := time.Date(y, m, d, 0, 0, 0, 0, loc)
+		fromLocal = dayStart.AddDate(-10, 0, 0)
+		toLocal = dayStart.AddDate(10, 0, 0)
 	default:
 		return re.BadRequestError("unknown view", nil)
 	}
@@ -194,6 +198,7 @@ func loadWindowEvents(app core.App, from, to time.Time, displayLoc *time.Locatio
 	if err != nil {
 		return nil, err
 	}
+	wideWindow := to.Sub(from) > 60*24*time.Hour
 
 	out := make([]WindowEvent, 0, len(rows))
 	for _, ev := range rows {
@@ -207,6 +212,9 @@ func loadWindowEvents(app core.App, from, to time.Time, displayLoc *time.Locatio
 		instances := occurrenceInstants(ev, from, to, displayLoc)
 		if len(instances) == 0 {
 			if rrule == "" && eventOverlapsWindow(ev, from, to, displayLoc) {
+				out = append(out, projectEvent(ev, calByID[calID], displayLoc))
+			} else if wideWindow && rrule == "" && strings.TrimSpace(ev.GetString("starts_at")) == "" {
+				// Undated events still appear in the wide list agenda.
 				out = append(out, projectEvent(ev, calByID[calID], displayLoc))
 			}
 			continue
@@ -346,6 +354,7 @@ func projectEvent(ev *core.Record, cal *core.Record, displayLoc *time.Location) 
 		EndsAt:        ev.GetString("ends_at"),
 		UID:           ev.GetString("uid"),
 		CalendarID:    ev.GetString("calendar"),
+		Attendees:     DecodeAttendeesJSON(ev.GetString("attendees")),
 	}
 	if we.Status == "" {
 		we.Status = "approved"

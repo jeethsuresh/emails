@@ -3,9 +3,13 @@ import type { AnalyzerStatus, MessageAnalysis, SyncStatus } from "../shared/type
 import { createPbClient } from "./lib/pb";
 import {
   applyAnalysisAction,
+  completeEventApply,
   getAnalyzerStatus,
   loadAnalysesForMessages,
+  type ApplyAnalysisResult,
 } from "./lib/analysis";
+import type { CalendarRecord, EventWriteInput } from "./lib/calendarApi";
+import { CreateEventModal } from "./components/CreateEventModal";
 import {
   evictPagesOutside,
   fetchMessagePage,
@@ -16,6 +20,8 @@ import {
 import {
   composeReply,
   listAliases,
+  moveMessage,
+  type ComposeMode,
   type ComposePrefill,
   type MailThread,
   type ThreadMessage,
@@ -81,9 +87,17 @@ export function App() {
   const [hasAccount, setHasAccount] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composePrefill, setComposePrefill] = useState<ComposePrefill>();
-  const [aliases, setAliases] = useState<string[]>([]);
+  const [aliases, setAliases] = useState<Array<{ email: string; count: number }>>([]);
   const [accountEmails, setAccountEmails] = useState<string[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [eventApplyGate, setEventApplyGate] = useState<{
+    analysis: MessageAnalysis;
+    initial: Partial<EventWriteInput>;
+    resolve: () => void;
+    reject: (err: Error) => void;
+  } | null>(null);
+  const [applyCalendars, setApplyCalendars] = useState<CalendarRecord[]>([]);
   const [ready, setReady] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [analysisByMessage, setAnalysisByMessage] = useState<Record<string, MessageAnalysis>>({});
@@ -91,6 +105,14 @@ export function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("mail");
   const [visibleMessageIds, setVisibleMessageIds] = useState<string[]>([]);
   const [mailMeta, setMailMeta] = useState<MailPaneMeta | null>(null);
+  const handlePaneMeta = useCallback((meta: MailPaneMeta) => {
+    setMailMeta((prev) => {
+      if (prev && prev.canBack === meta.canBack && prev.title === meta.title) {
+        return prev;
+      }
+      return meta;
+    });
+  }, []);
   const selectedFolderRef = useRef<string | null>(null);
   const queryRef = useRef("");
   const slotsRef = useRef<Array<Message | null>>([]);
@@ -99,8 +121,26 @@ export function App() {
   const selectionSeqRef = useRef(0);
   const loadedPagesRef = useRef<Set<number>>(new Set());
   const inflightPagesRef = useRef<Set<number>>(new Set());
+  const readerIdsRef = useRef<string[]>([]);
+  const readerMessageIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const message of threadMessages) {
+      if (message.id) ids.push(message.id);
+    }
+    if (selectedMessage?.id && !ids.includes(selectedMessage.id)) {
+      ids.push(selectedMessage.id);
+    }
+    return ids;
+  }, [threadMessages, selectedMessage?.id]);
   slotsRef.current = slots;
   visibleIdsRef.current = visibleMessageIds;
+  readerIdsRef.current = readerMessageIds;
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     selectedFolderRef.current = selectedFolder;
@@ -192,11 +232,21 @@ export function App() {
   );
 
   const refreshAnalyses = useCallback(
-    async (ids: string[]) => {
+    async (ids: string[], opts: { includeReply?: boolean } = {}) => {
       if (ids.length === 0) return;
       try {
-        const map = await loadAnalysesForMessages(pb, ids);
-        setAnalysisByMessage((prev) => ({ ...prev, ...map }));
+        const map = await loadAnalysesForMessages(pb, ids, opts);
+        setAnalysisByMessage((prev) => {
+          const next = { ...prev };
+          for (const [id, row] of Object.entries(map)) {
+            next[id] = {
+              ...prev[id],
+              ...row,
+              suggested_reply: row.suggested_reply || prev[id]?.suggested_reply || "",
+            };
+          }
+          return next;
+        });
       } catch (err) {
         console.error("refreshAnalyses failed", err);
       }
@@ -262,11 +312,24 @@ export function App() {
         slotsRef.current.find((m) => m?.id === analysis.message)?.subject ??
         selectedMessage?.subject ??
         "";
-      await applyAnalysisAction(pb, analysis, subject);
+      const result: ApplyAnalysisResult = await applyAnalysisAction(pb, analysis, subject);
+      if (result.status === "needs_event_details") {
+        const rows = await pb.collection("calendars").getFullList<CalendarRecord>({ batch: 50 });
+        setApplyCalendars(rows);
+        await new Promise<void>((resolve, reject) => {
+          setEventApplyGate({
+            analysis: result.analysis,
+            initial: result.initial,
+            resolve,
+            reject,
+          });
+        });
+      }
       if (analysis.suggested_action === "move_to_folder" || analysis.suggested_action === "move_to_spam") {
         await refreshFolders();
       } else {
         await refreshAnalyses(visibleIdsRef.current);
+        await refreshAnalyses(readerIdsRef.current, { includeReply: true });
       }
     },
     [pb, refreshFolders, refreshAnalyses, selectedMessage?.subject],
@@ -308,7 +371,7 @@ export function App() {
     let cancelled = false;
     void listAliases(pb)
       .then((rows) => {
-        if (!cancelled) setAliases(rows.map((row) => row.email));
+        if (!cancelled) setAliases(rows);
       })
       .catch((err: unknown) => console.error("listAliases failed", err));
     return () => {
@@ -319,7 +382,7 @@ export function App() {
   // Account addresses are always valid senders; aliases only appear once mail
   // has arrived for them, so From must not depend on the alias list.
   const fromOptions = useMemo(
-    () => [...new Set([...accountEmails, ...aliases].filter(Boolean))],
+    () => [...new Set([...accountEmails, ...aliases.map((row) => row.email)].filter(Boolean))],
     [accountEmails, aliases],
   );
 
@@ -329,6 +392,16 @@ export function App() {
     if (!next) return;
     setSelectedMessage((prev) => {
       if (!prev || prev.id !== next.id) return prev;
+      if (
+        prev.subject === next.subject &&
+        prev.from_addr === next.from_addr &&
+        prev.date === next.date &&
+        prev.snippet === next.snippet &&
+        prev.seen === next.seen &&
+        prev.flagged === next.flagged
+      ) {
+        return prev;
+      }
       return {
         ...prev,
         subject: next.subject,
@@ -362,10 +435,14 @@ export function App() {
   }, [visibleMessageIds, refreshAnalyses]);
 
   useEffect(() => {
-    const t = setInterval(
-      () => void refreshAnalyses(visibleIdsRef.current),
-      ANALYSIS_POLL_MS,
-    );
+    void refreshAnalyses(readerMessageIds, { includeReply: true });
+  }, [readerMessageIds, refreshAnalyses]);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      void refreshAnalyses(visibleIdsRef.current);
+      void refreshAnalyses(readerIdsRef.current, { includeReply: true });
+    }, ANALYSIS_POLL_MS);
     return () => clearInterval(t);
   }, [refreshAnalyses]);
 
@@ -445,18 +522,23 @@ export function App() {
     }
   };
 
-  const clearMailSelection = () => {
+  const clearMailSelection = useCallback(() => {
     selectionSeqRef.current += 1;
     setSelectedMessage(null);
     setSelectedThread(null);
     setThreadMessages([]);
     setLoadingBody(false);
-  };
+  }, []);
 
   const refreshCurrentList = () => {
     setThreadRefreshKey((key) => key + 1);
     if (queryRef.current.trim()) {
       void reloadList(selectedFolderRef.current, queryRef.current);
+    }
+    if (hasAccount) {
+      void listAliases(pb)
+        .then(setAliases)
+        .catch((err: unknown) => console.error("listAliases failed", err));
     }
   };
 
@@ -470,14 +552,62 @@ export function App() {
     });
   };
 
-  const openComposeReply = async (
+  const openCompose = async (
     messageId: string,
-    useSuggestedReply: boolean,
+    mode: ComposeMode = "reply",
+    useSuggestedReply = false,
   ) => {
-    const nextPrefill = await composeReply(pb, messageId, useSuggestedReply);
+    const nextPrefill = await composeReply(pb, messageId, useSuggestedReply, mode);
     setComposePrefill(nextPrefill);
     setComposeOpen(true);
   };
+
+  const findFolderByRole = (roles: string[], nameHints: string[] = []) => {
+    const roleSet = new Set(roles.map((r) => r.toLowerCase()));
+    const byRole = folders.find((f) => roleSet.has(f.role.toLowerCase()));
+    if (byRole) return byRole;
+    return folders.find((f) =>
+      nameHints.some((hint) => f.name.toLowerCase().includes(hint.toLowerCase())),
+    );
+  };
+
+  const afterMessageAction = async () => {
+    clearMailSelection();
+    await refreshFolders();
+    refreshCurrentList();
+  };
+
+  const moveSelectedMessage = async (messageId: string, folderId: string) => {
+    await moveMessage(pb, messageId, { folderId });
+    await afterMessageAction();
+  };
+
+  const archiveMessage = async (messageId: string) => {
+    const folder = findFolderByRole(["archive"], ["archive", "all mail"]);
+    if (!folder) throw new Error("No archive folder found");
+    await moveMessage(pb, messageId, { folderId: folder.id });
+    await afterMessageAction();
+  };
+
+  const spamMessage = async (messageId: string) => {
+    await moveMessage(pb, messageId, { toSpam: true });
+    await afterMessageAction();
+  };
+
+  const deleteMessage = async (messageId: string) => {
+    const folder = findFolderByRole(["trash"], ["trash", "deleted"]);
+    if (!folder) throw new Error("No trash folder found");
+    await moveMessage(pb, messageId, { folderId: folder.id });
+    await afterMessageAction();
+  };
+
+  if (!ready) {
+    return (
+      <div className="setup-screen">
+        <p className="hint">Connecting to local backend…</p>
+      </div>
+    );
+  }
 
   if (!hasAccount) {
     return (
@@ -489,7 +619,6 @@ export function App() {
           }}
         />
         <SyncBadge status={status} />
-        {!ready && <p className="hint">Connecting to local backend…</p>}
       </div>
     );
   }
@@ -513,6 +642,14 @@ export function App() {
       onSync={() => void window.email.triggerSync()}
       status={status}
     >
+      {notice ? (
+        <p className="hint app-notice" role="status">
+          {notice}
+          <button type="button" onClick={() => setNotice(null)}>
+            Dismiss
+          </button>
+        </p>
+      ) : null}
       {activeTab === "mail" ? (
         <MailShell
           pb={pb}
@@ -525,6 +662,7 @@ export function App() {
             setSelectedAlias(email);
             clearMailSelection();
           }}
+          aliases={aliases}
           selectedThread={selectedThread}
           threadMessages={threadMessages}
           onOpenThread={openThread}
@@ -543,7 +681,9 @@ export function App() {
           downloadingBody={loadingBody}
           analysisByMessage={analysisByMessage}
           onVisibleRange={(start, end, ids) => {
-            setVisibleMessageIds(ids);
+            setVisibleMessageIds((prev) =>
+              prev.length === ids.length && prev.every((id, i) => id === ids[i]) ? prev : ids,
+            );
             void ensurePages(selectedFolderRef.current, queryRef.current, start, end);
           }}
           onToggleFlag={async (msg) => {
@@ -555,8 +695,12 @@ export function App() {
             patchSlot(msg.id, { seen: !msg.seen });
           }}
           onApplyAnalysis={applyAnalysis}
-          onComposeReply={openComposeReply}
-          onPaneMeta={setMailMeta}
+          onCompose={openCompose}
+          onMoveMessage={moveSelectedMessage}
+          onArchiveMessage={archiveMessage}
+          onSpamMessage={spamMessage}
+          onDeleteMessage={deleteMessage}
+          onPaneMeta={handlePaneMeta}
         />
       ) : null}
 
@@ -572,10 +716,43 @@ export function App() {
             setComposeOpen(false);
             setComposePrefill(undefined);
           }}
-          onSaved={refreshCurrentList}
-          onSent={refreshCurrentList}
+          onSaved={() => {
+            refreshCurrentList();
+            setNotice("Draft saved");
+          }}
+          onSent={(result) => {
+            refreshCurrentList();
+            setNotice(result?.warning ? `Sent (${result.warning})` : "Message sent");
+          }}
         />
       )}
+      {eventApplyGate ? (
+        <CreateEventModal
+          pb={pb}
+          calendars={applyCalendars}
+          defaultTimezone={
+            eventApplyGate.initial.timezone ||
+            Intl.DateTimeFormat().resolvedOptions().timeZone ||
+            "UTC"
+          }
+          initial={eventApplyGate.initial}
+          saveEvent={async (body) => {
+            await completeEventApply(pb, eventApplyGate.analysis, body);
+          }}
+          onClose={() => {
+            setEventApplyGate((prev) => {
+              if (prev) prev.reject(new Error("cancelled"));
+              return null;
+            });
+          }}
+          onSaved={() => {
+            setEventApplyGate((prev) => {
+              prev?.resolve();
+              return null;
+            });
+          }}
+        />
+      ) : null}
       {settingsOpen && (
         <SettingsScreen
           pb={pb}

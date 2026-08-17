@@ -17,10 +17,11 @@ type eventWriteRequest struct {
 	AllDay     bool   `json:"allDay"`
 	Timezone   string `json:"timezone"`
 	// Wall times in event timezone (or YYYY-MM-DD for all-day). Never browser-local ISO.
-	StartWall     string `json:"startWall"`
-	EndWall       string `json:"endWall"`
-	Status        string `json:"status"`
-	SourceMessage string `json:"sourceMessage"`
+	StartWall     string   `json:"startWall"`
+	EndWall       string   `json:"endWall"`
+	Status        string   `json:"status"`
+	SourceMessage string    `json:"sourceMessage"`
+	Attendees     *[]string `json:"attendees"`
 }
 
 type eventWriteResponse struct {
@@ -113,14 +114,17 @@ func upsertEventRecord(app core.App, existing *core.Record, req eventWriteReques
 	}
 
 	title := strings.TrimSpace(req.Title)
-	if title == "" && existing == nil {
+	if title == "" {
 		return nil, errString("title required")
 	}
-	if title != "" {
-		rec.Set("title", title)
-	}
+	rec.Set("title", title)
 	if req.Notes != "" || existing == nil {
 		rec.Set("notes", strings.TrimSpace(req.Notes))
+	}
+	if req.Attendees != nil {
+		rec.Set("attendees", EncodeAttendeesJSON(*req.Attendees))
+	} else if existing == nil {
+		rec.Set("attendees", "")
 	}
 
 	status := strings.TrimSpace(req.Status)
@@ -149,7 +153,7 @@ func upsertEventRecord(app core.App, existing *core.Record, req eventWriteReques
 			startDay = time.Date(startDay.Year(), startDay.Month(), startDay.Day(), 0, 0, 0, 0, time.UTC)
 		}
 		if !ok {
-			return nil, errString("startWall required for all-day (YYYY-MM-DD)")
+			return nil, errString("start required for all-day (YYYY-MM-DD)")
 		}
 		endInclusive, okEnd := parseDateOnly(req.EndWall)
 		if !okEnd {
@@ -162,10 +166,10 @@ func upsertEventRecord(app core.App, existing *core.Record, req eventWriteReques
 			endInclusive = time.Date(endInclusive.Year(), endInclusive.Month(), endInclusive.Day(), 0, 0, 0, 0, time.UTC)
 		}
 		if !okEnd {
-			endInclusive = startDay
+			return nil, errString("end required for all-day (YYYY-MM-DD)")
 		}
 		if endInclusive.Before(startDay) {
-			endInclusive = startDay
+			return nil, errString("end must be on or after start")
 		}
 		// Inclusive UI end date → exclusive storage (iCal-style).
 		endExclusive := endInclusive.AddDate(0, 0, 1)
@@ -174,14 +178,14 @@ func upsertEventRecord(app core.App, existing *core.Record, req eventWriteReques
 	} else {
 		startUTC, err := wallToUTC(req.StartWall, tz)
 		if err != nil {
-			return nil, errString("startWall required")
+			return nil, errString("start required")
 		}
 		endUTC, err := wallToUTC(req.EndWall, tz)
 		if err != nil {
-			endUTC = startUTC.Add(time.Hour)
+			return nil, errString("end required")
 		}
 		if !endUTC.After(startUTC) {
-			endUTC = startUTC.Add(time.Hour)
+			return nil, errString("end must be after start")
 		}
 		rec.Set("starts_at", startUTC.Format(time.RFC3339))
 		rec.Set("ends_at", endUTC.Format(time.RFC3339))
@@ -211,5 +215,6 @@ func eventJSON(rec *core.Record) map[string]any {
 		"all_day":        rec.GetBool("all_day"),
 		"timezone":       rec.GetString("timezone"),
 		"uid":            rec.GetString("uid"),
+		"attendees":      DecodeAttendeesJSON(rec.GetString("attendees")),
 	}
 }

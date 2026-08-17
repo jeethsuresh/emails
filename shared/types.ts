@@ -31,7 +31,11 @@ export interface MessageAnalysis {
   priority: AnalysisPriority | "";
   suggested_action: SuggestedAction | "";
   action_target: string;
+  create_folder?: boolean;
   suggested_reply: string;
+  event_starts_at?: string;
+  event_ends_at?: string;
+  event_attendees?: string;
   model: string;
   error: string;
   fail_count: number;
@@ -57,7 +61,7 @@ export interface AnalyzerStatus {
   model: string;
 }
 
-export type ItemStatus = "draft" | "approved";
+export type ItemStatus = "draft" | "approved" | "completed";
 
 export interface TodoItem {
   id: string;
@@ -81,6 +85,7 @@ export interface EventItem {
   calendar: string;
   all_day: boolean;
   timezone: string;
+  attendees?: string;
   uid: string;
 }
 

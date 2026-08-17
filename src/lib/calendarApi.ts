@@ -47,6 +47,7 @@ export interface WindowEvent {
   lane: number;
   laneCount: number;
   uid: string;
+  attendees?: string[];
 }
 
 export interface WindowResponse {
@@ -78,6 +79,7 @@ export interface EventWriteInput {
   endWall: string;
   status?: string;
   sourceMessage?: string;
+  attendees?: string[];
 }
 
 export async function fetchCalendarBounds(

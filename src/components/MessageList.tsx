@@ -117,12 +117,17 @@ export function MessageList({
                 return (
                   <li
                     key={m.id}
-                    className={selectedId === m.id ? "active" : ""}
+                    className={`${selectedId === m.id ? "active " : ""}${m.seen ? "read" : "unread"}`.trim()}
                     style={{ height: ROW_HEIGHT }}
                   >
-                    <button type="button" className="row" onClick={() => onSelect(m)}>
+                    <button
+                      type="button"
+                      className={`row ${m.seen ? "read" : "unread"}`}
+                      onClick={() => onSelect(m)}
+                    >
                       <div className="meta">
-                        <strong className={`clamp-2 ${m.seen ? "" : "unread"}`}>
+                        <strong className="clamp-2">
+                          {m.seen ? null : <span className="unread-dot" aria-hidden />}
                           {m.from_addr || "(unknown)"}
                         </strong>
                         <time>{m.date ? new Date(m.date).toLocaleString() : ""}</time>

@@ -80,7 +80,7 @@ export function ThreadList({
     setOpeningId(thread.id);
     setError(null);
     try {
-      const result = await getThread(pb, thread.id);
+      const result = await getThread(pb, thread.id, folder ?? undefined);
       if (seq === openSeq.current) onOpenThread(result.thread, result.messages);
     } catch (err) {
       if (seq === openSeq.current) {
@@ -107,11 +107,11 @@ export function ThreadList({
             {threads.map((thread) => (
               <li
                 key={thread.id}
-                className={`${selectedId === thread.id ? "active " : ""}${thread.unread_count > 0 ? "unread" : ""}`.trim()}
+                className={`${selectedId === thread.id ? "active " : ""}${thread.unread_count > 0 ? "unread" : "read"}`.trim()}
               >
                 <button
                   type="button"
-                  className="row thread-row"
+                  className={`row thread-row ${thread.unread_count > 0 ? "unread" : "read"}`}
                   disabled={openingId === thread.id}
                   onClick={() => void openThread(thread)}
                 >

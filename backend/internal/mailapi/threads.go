@@ -113,6 +113,7 @@ func handleGetThread(re *core.RequestEvent) error {
 	if err != nil {
 		return re.NotFoundError("thread not found", err)
 	}
+	viewFolder := strings.TrimSpace(re.Request.URL.Query().Get("folder"))
 	// Newest-first with a cap, then reversed: an oversized thread keeps its
 	// latest replies instead of stopping 500 messages into the past.
 	messages, err := re.App.FindRecordsByFilter(
@@ -126,6 +127,10 @@ func handleGetThread(re *core.RequestEvent) error {
 	if err != nil {
 		return re.InternalServerError("load thread messages", err)
 	}
+	messages, err = filterThreadMessagesForFolder(re.App, messages, viewFolder)
+	if err != nil {
+		return re.InternalServerError("filter thread messages", err)
+	}
 	messageItems := make([]map[string]any, 0, len(messages))
 	for i := len(messages) - 1; i >= 0; i-- {
 		messageItems = append(messageItems, messageJSON(messages[i]))
@@ -134,6 +139,50 @@ func handleGetThread(re *core.RequestEvent) error {
 		"thread":   threadJSON(thread),
 		"messages": messageItems,
 	})
+}
+
+// filterThreadMessagesForFolder keeps messages that still live in the folder
+// the user is browsing, plus Sent/Drafts so a reply does not vanish from the
+// conversation. Filed copies in Billing/Spam/Trash stay out of Inbox.
+func filterThreadMessagesForFolder(app core.App, messages []*core.Record, viewFolder string) ([]*core.Record, error) {
+	if viewFolder == "" || len(messages) == 0 {
+		return messages, nil
+	}
+	roleByFolder := map[string]string{}
+	out := make([]*core.Record, 0, len(messages))
+	for _, msg := range messages {
+		folderID := msg.GetString("folder")
+		if folderID == viewFolder {
+			out = append(out, msg)
+			continue
+		}
+		role, ok := roleByFolder[folderID]
+		if !ok {
+			role = folderRole(app, folderID)
+			roleByFolder[folderID] = role
+		}
+		switch role {
+		case "sent", "drafts":
+			out = append(out, msg)
+		default:
+			// Inbox, user folders, spam, and trash stay in their own views.
+		}
+	}
+	if len(out) == 0 {
+		return messages, nil
+	}
+	return out, nil
+}
+
+func folderRole(app core.App, folderID string) string {
+	if folderID == "" {
+		return ""
+	}
+	folder, err := app.FindRecordById("folders", folderID)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(folder.GetString("role")))
 }
 
 func pagination(pageValue, perPageValue string) (int, int) {

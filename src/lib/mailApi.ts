@@ -92,9 +92,11 @@ export async function listThreads(
 export async function getThread(
   pb: PocketBase,
   id: string,
+  folder?: string,
 ): Promise<{ thread: MailThread; messages: ThreadMessage[] }> {
+  const query = folder ? `?folder=${encodeURIComponent(folder)}` : "";
   return pb.send<{ thread: MailThread; messages: ThreadMessage[] }>(
-    `/api/email/threads/${encodeURIComponent(id)}`,
+    `/api/email/threads/${encodeURIComponent(id)}${query}`,
     { method: "GET" },
   );
 }

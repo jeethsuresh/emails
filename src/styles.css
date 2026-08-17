@@ -600,6 +600,22 @@ button:hover {
   overflow: hidden;
 }
 
+.messages li.unread {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.messages li.read .subject,
+.messages li.read .meta strong,
+.messages li.read .snippet {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.messages li.read .snippet {
+  opacity: 0.85;
+}
+
 .messages .row {
   width: 100%;
   text-align: left;
@@ -721,6 +737,11 @@ button:hover {
   color: var(--ink);
 }
 
+.thread-list li.read .subject,
+.thread-list li.read .meta strong {
+  font-weight: 500;
+}
+
 .thread-subject-line {
   display: flex;
   align-items: center;
@@ -751,6 +772,24 @@ button:hover {
   border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.unread-pill {
+  display: inline-block;
+  margin-right: 0.45rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, white);
+  color: var(--accent-ink, var(--accent));
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.reader.unread h1 {
+  font-weight: 750;
 }
 
 .thread-opening {
@@ -815,6 +854,31 @@ button:hover {
 .thread-message-stack time {
   color: var(--muted);
   font-size: 0.7rem;
+}
+
+.thread-message-stack button.unread {
+  box-shadow: inset 0 -2px 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, white);
+}
+
+.thread-message-stack button.unread strong {
+  color: var(--ink);
+  font-weight: 750;
+}
+
+.thread-message-stack button.read {
+  color: var(--muted);
+}
+
+.thread-message-stack button.read strong {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.thread-message-stack strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .thread-message-stack button.active {
@@ -1118,6 +1182,31 @@ button:hover {
   width: min(640px, 100%);
   max-height: min(90vh, 900px);
   overflow: auto;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.settings-header h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+}
+
+.settings-divider {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1rem 0;
+}
+
+.settings-ai-form code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
 }
 
 .settings-modal .account-form {

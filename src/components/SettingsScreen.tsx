@@ -24,12 +24,12 @@ function AnalyzerSettingsForm({ pb }: { pb: PocketBase }) {
   }, [pb]);
 
   if (!form) {
-    return <p className="hint">Loading LLM settings…</p>;
+    return <p className="hint">Loading AI settings…</p>;
   }
 
   return (
     <form
-      className="account-form"
+      className="account-form settings-ai-form"
       onSubmit={(e) => {
         e.preventDefault();
         setBusy(true);
@@ -37,50 +37,68 @@ function AnalyzerSettingsForm({ pb }: { pb: PocketBase }) {
         setSaved(false);
         void saveAnalyzerSettings(pb, form)
           .then((next) => {
-            setForm(next);
+            setForm({
+              ...next,
+              syncIntervalMinutes: next.syncIntervalMinutes || 5,
+            });
             setSaved(true);
           })
           .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
           .finally(() => setBusy(false));
       }}
     >
-      <h2 className="form-section">Local LLM analysis</h2>
+      <h2 className="form-section">AI analysis</h2>
+      <p className="hint">
+        OpenAI-compatible server used for message analysis (LM Studio, Ollama, etc.). Paths like{" "}
+        <code>/v1/chat/completions</code> are appended automatically.
+      </p>
+      <label>
+        AI endpoint
+        <input
+          value={form.baseUrl}
+          onChange={(e) => {
+            setSaved(false);
+            setForm({ ...form, baseUrl: e.target.value });
+          }}
+          placeholder="http://127.0.0.1:1234"
+          autoComplete="off"
+          spellCheck={false}
+          inputMode="url"
+        />
+      </label>
       <label>
         Model
         <input
           value={form.model}
-          onChange={(e) => setForm({ ...form, model: e.target.value })}
+          onChange={(e) => {
+            setSaved(false);
+            setForm({ ...form, model: e.target.value });
+          }}
           placeholder="google/gemma-4-e4b"
+          autoComplete="off"
+          spellCheck={false}
         />
       </label>
       <label>
-        Base URL
-        <input
-          value={form.baseUrl}
-          onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
-          placeholder="http://127.0.0.1:1234"
-        />
-      </label>
-      <h2 className="form-section">Sync</h2>
-      <label>
-        Sync every (minutes)
+        Mail sync every (minutes)
         <input
           type="number"
           min={1}
           max={60}
           value={form.syncIntervalMinutes ?? 5}
-          onChange={(e) =>
+          onChange={(e) => {
+            setSaved(false);
             setForm({
               ...form,
               syncIntervalMinutes: Number(e.target.value) || 5,
-            })
-          }
+            });
+          }}
         />
       </label>
-      {error && <p className="error">{error}</p>}
+      {error ? <p className="error">{error}</p> : null}
       <div className="modal-actions">
         <button type="submit" disabled={busy}>
-          {busy ? "Saving…" : saved ? "Saved" : "Save settings"}
+          {busy ? "Saving…" : saved ? "Saved" : "Save AI settings"}
         </button>
       </div>
     </form>
@@ -156,14 +174,27 @@ export function SettingsScreen({
 
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
-      <div className="modal settings-modal" role="dialog" aria-label="Settings" onClick={(e) => e.stopPropagation()}>
-        {loadError && <p className="error">{loadError}</p>}
+      <div
+        className="modal settings-modal"
+        role="dialog"
+        aria-label="Settings"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="settings-header">
+          <h1>Settings</h1>
+          <button type="button" onClick={onClose}>
+            Close
+          </button>
+        </header>
+        {loadError ? <p className="error">{loadError}</p> : null}
+        <AnalyzerSettingsForm pb={pb} />
+        <hr className="settings-divider" />
         {!initial ? (
-          <p>Loading settings…</p>
+          <p>Loading account settings…</p>
         ) : (
           <ConnectionForm
-            title="Settings"
-            subtitle="Update IMAP/SMTP connection and TLS mode."
+            title="Mail account"
+            subtitle="IMAP/SMTP connection and TLS mode."
             initial={initial}
             submitLabel="Save & sync"
             onCancel={onClose}
@@ -173,7 +204,7 @@ export function SettingsScreen({
             }}
           />
         )}
-        <AnalyzerSettingsForm pb={pb} />
+        <hr className="settings-divider" />
         <SyncLogsSection status={status} />
       </div>
     </div>

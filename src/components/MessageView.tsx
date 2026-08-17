@@ -13,6 +13,7 @@ interface Message {
   body_text: string;
   body_html?: string;
   flagged: boolean;
+  seen?: boolean;
 }
 
 interface Folder {
@@ -275,9 +276,12 @@ export function MessageView({
   const busy = actionBusy || composeBusy;
 
   return (
-    <article className="reader">
+    <article className={`reader ${message.seen === false ? "unread" : "read"}`}>
       <header>
-        <h1>{subject || "(no subject)"}</h1>
+        <h1>
+          {message.seen === false ? <span className="unread-pill">Unread</span> : null}
+          {subject || "(no subject)"}
+        </h1>
         <p className="reader-meta">
           <span>
             {message.from_addr}

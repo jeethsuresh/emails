@@ -265,11 +265,14 @@ export function MailShell({
               <button
                 type="button"
                 key={message.id}
-                className={selectedMessage?.id === message.id ? "active" : ""}
+                className={`${selectedMessage?.id === message.id ? "active " : ""}${message.seen ? "read" : "unread"}`.trim()}
                 onClick={() => onSelectLoadedMessage(message)}
               >
                 <span>{index + 1}</span>
-                <strong className="clamp-2">{message.from_addr || "(unknown)"}</strong>
+                <strong className="clamp-2">
+                  {message.seen ? null : <span className="unread-dot" aria-hidden />}
+                  {message.from_addr || "(unknown)"}
+                </strong>
                 <time>{message.date ? new Date(message.date).toLocaleDateString() : ""}</time>
               </button>
             ))}

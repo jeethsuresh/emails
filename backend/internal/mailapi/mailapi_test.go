@@ -240,6 +240,74 @@ func TestFindThreadIDsKeepsThreadInFolderOfOlderMessage(t *testing.T) {
 	}
 }
 
+func TestFindThreadIDsDropsThreadWhenLastFolderMessageMoves(t *testing.T) {
+	app := newTestMailApp(t)
+	account := newTestAccount(t, app)
+	inbox := newTestFolder(t, app, account.Id)
+	bills := newTestFolderWithRole(t, app, account.Id, "Folders/bills", "other")
+	thread := newTestThread(t, app, "threadfiled0001", map[string]any{
+		"folder":    inbox.Id,
+		"last_date": "2026-08-13T12:00:00Z",
+	})
+	msg := newTestMessage(t, app, account.Id, inbox.Id, 1, map[string]any{
+		"thread_id": thread.Id,
+		"date":      "2026-08-13T12:00:00Z",
+	})
+	msg.Set("folder", bills.Id)
+	if err := app.Save(msg); err != nil {
+		t.Fatal(err)
+	}
+
+	ids, total, err := findThreadIDs(app, inbox.Id, "", 1, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 0 || len(ids) != 0 {
+		t.Fatalf("inbox listing after file = %v (total %d), want empty", ids, total)
+	}
+	ids, total, err = findThreadIDs(app, bills.Id, "", 1, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(ids) != 1 || ids[0] != thread.Id {
+		t.Fatalf("bills listing = %v (total %d), want the filed thread", ids, total)
+	}
+}
+
+func TestFilterThreadMessagesForFolderHidesFiledCopies(t *testing.T) {
+	app := newTestMailApp(t)
+	account := newTestAccount(t, app)
+	inbox := newTestFolder(t, app, account.Id)
+	sent := newTestSentFolder(t, app, account.Id)
+	bills := newTestFolderWithRole(t, app, account.Id, "Folders/bills", "other")
+	threadID := "threadmixfold01"
+	inboxMsg := newTestMessage(t, app, account.Id, inbox.Id, 1, map[string]any{
+		"thread_id": threadID,
+		"date":      "2026-08-13T12:00:00Z",
+	})
+	sentMsg := newTestMessage(t, app, account.Id, sent.Id, 2, map[string]any{
+		"thread_id": threadID,
+		"date":      "2026-08-13T13:00:00Z",
+	})
+	filed := newTestMessage(t, app, account.Id, bills.Id, 3, map[string]any{
+		"thread_id": threadID,
+		"date":      "2026-08-13T14:00:00Z",
+	})
+
+	kept, err := filterThreadMessagesForFolder(app, []*core.Record{filed, sentMsg, inboxMsg}, inbox.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != 2 {
+		t.Fatalf("kept %d messages, want inbox+sent", len(kept))
+	}
+	for _, msg := range kept {
+		if msg.Id == filed.Id {
+			t.Fatal("filed copy should not appear when viewing inbox")
+		}
+	}
+}
+
 func TestFindThreadIDsSkipsThreadsWithoutMessages(t *testing.T) {
 	app := newTestMailApp(t)
 	account := newTestAccount(t, app)

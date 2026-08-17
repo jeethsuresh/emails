@@ -23,6 +23,7 @@ func Register(app core.App) {
 		StartMailMetaBackfill(e.App)
 		return e.Next()
 	})
+	bindMessageThreadHooks(app)
 }
 
 func ensureCollections(app core.App) error {

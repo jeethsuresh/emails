@@ -152,10 +152,12 @@ export function App() {
 
   const buildFilter = useCallback((folderId: string | null, search: string) => {
     const safe = escapeFilterValue(search.trim());
-    if (safe) {
-      return `(subject ~ "${safe}" || from_addr ~ "${safe}" || to_addrs ~ "${safe}" || snippet ~ "${safe}" || search_tokens ~ "${safe}")`;
+    const folderClause = folderId ? `folder = "${folderId}"` : "";
+    if (!safe) {
+      return folderClause;
     }
-    return `folder = "${folderId}"`;
+    const searchClause = `(subject ~ "${safe}" || from_addr ~ "${safe}" || to_addrs ~ "${safe}" || snippet ~ "${safe}" || search_tokens ~ "${safe}")`;
+    return folderClause ? `(${folderClause}) && ${searchClause}` : searchClause;
   }, []);
 
   const resetMessageList = useCallback(() => {
@@ -327,6 +329,11 @@ export function App() {
         });
       }
       if (analysis.suggested_action === "move_to_folder" || analysis.suggested_action === "move_to_spam") {
+        selectionSeqRef.current += 1;
+        setSelectedMessage(null);
+        setSelectedThread(null);
+        setThreadMessages([]);
+        setLoadingBody(false);
         await refreshFolders();
       } else {
         await refreshAnalyses(visibleIdsRef.current);
@@ -509,6 +516,42 @@ export function App() {
     resetMessageList();
   };
 
+  const applySeen = (ids: string[], seen: boolean) => {
+    const idSet = new Set(ids);
+    setSlots((prev) => {
+      let changed = false;
+      const next = prev.map((row) => {
+        if (!row || !idSet.has(row.id) || row.seen === seen) return row;
+        changed = true;
+        return { ...row, seen };
+      });
+      return changed ? next : prev;
+    });
+    setSelectedMessage((current) =>
+      current && idSet.has(current.id) && current.seen !== seen ? { ...current, seen } : current,
+    );
+    setThreadMessages((current) => {
+      let changed = false;
+      const next = current.map((item) => {
+        if (!idSet.has(item.id) || item.seen === seen) return item;
+        changed = true;
+        return { ...item, seen };
+      });
+      return changed ? next : current;
+    });
+    setThreadRefreshKey((key) => key + 1);
+  };
+
+  const markMessagesSeen = async (messages: Array<{ id: string; seen: boolean }>) => {
+    const unread = messages.filter((message) => !message.seen);
+    if (unread.length === 0) return;
+    await Promise.all(unread.map((message) => pb.collection("messages").update(message.id, { seen: true })));
+    applySeen(
+      unread.map((message) => message.id),
+      true,
+    );
+  };
+
   const selectMessage = async (m: Message) => {
     const seq = ++selectionSeqRef.current;
     setSelectedThread(null);
@@ -518,7 +561,10 @@ export function App() {
     try {
       const full = await pb.collection("messages").getOne<Message>(m.id);
       const next = await fetchMissingMessageBody(full);
-      if (seq === selectionSeqRef.current) setSelectedMessage(next);
+      if (seq !== selectionSeqRef.current) return;
+      const viewed = next.seen ? next : { ...next, seen: true };
+      setSelectedMessage(viewed);
+      void markMessagesSeen([next]);
     } catch (err) {
       if (seq === selectionSeqRef.current) console.error("selectMessage failed", err);
     } finally {
@@ -533,10 +579,12 @@ export function App() {
     try {
       const next = await fetchMissingMessageBody(message);
       if (seq !== selectionSeqRef.current) return;
-      setSelectedMessage(next);
+      const viewed = next.seen ? next : { ...next, seen: true };
+      setSelectedMessage(viewed);
       setThreadMessages((current) =>
-        current.map((item) => (item.id === next.id ? { ...item, ...next } : item)),
+        current.map((item) => (item.id === viewed.id ? { ...item, ...viewed } : item)),
       );
+      void markMessagesSeen([next]);
     } catch (err) {
       if (seq === selectionSeqRef.current) console.error("selectLoadedMessage failed", err);
     } finally {
@@ -550,6 +598,7 @@ export function App() {
     const newest = messages.at(-1);
     if (newest) {
       void selectLoadedMessage(newest);
+      void markMessagesSeen(messages.filter((item) => item.id !== newest.id));
     } else {
       selectionSeqRef.current += 1;
       setSelectedMessage(null);
@@ -726,8 +775,9 @@ export function App() {
             patchSlot(msg.id, { flagged: !msg.flagged });
           }}
           onToggleSeen={async (msg) => {
-            await pb.collection("messages").update(msg.id, { seen: !msg.seen });
-            patchSlot(msg.id, { seen: !msg.seen });
+            const seen = !msg.seen;
+            await pb.collection("messages").update(msg.id, { seen });
+            applySeen([msg.id], seen);
           }}
           onApplyAnalysis={applyAnalysis}
           onReanalyze={reanalyze}

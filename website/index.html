@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Email — offline-first desktop mail</title>
+    <meta
+      name="description"
+      content="A local-first desktop mail client. Your mail stays on disk; IMAP and SMTP sync in the background."
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <p class="eyebrow">Desktop mail, stored locally</p>
+      <h1>Email</h1>
+      <p class="lede">
+        An offline-first mail client for macOS, Windows, and Linux. The inbox lives in a local
+        database on your machine. Sync is best-effort, not the source of truth.
+      </p>
+      <p class="version" id="version-line">Looking up the latest release…</p>
+    </header>
+
+    <main>
+      <section id="download">
+        <h2>Download</h2>
+        <p class="section-copy">
+          Direct links to the latest CI artifacts. Builds are unsigned — macOS needs
+          <strong>right-click → Open</strong> the first time; Windows may show SmartScreen
+          “Run anyway.”
+        </p>
+        <div class="downloads" id="downloads"></div>
+        <p class="fallback">
+          <a id="releases-link" href="https://github.com/jeethsuresh/emails/releases">All GitHub Releases</a>
+          ·
+          <a href="https://github.com/jeethsuresh/emails">Source</a>
+        </p>
+      </section>
+
+      <section>
+        <h2>What it is</h2>
+        <p>
+          Email is a desktop client for IMAP/SMTP accounts. It is built for people who want their
+          mail available when the network is not, and who prefer a local store over a hosted webmail
+          tab. v1 signs in with an IMAP/SMTP password.
+        </p>
+        <ul class="features">
+          <li>Folders, threads, search, star/unread, drafts, and compose/send</li>
+          <li>Calendar (CalDAV / ICS) beside the inbox</li>
+          <li>Optional on-device analysis for suggested replies and events</li>
+          <li>Data on disk under <code>~/.emails/</code> (override with <code>EMAIL_HOME</code>)</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>How it works</h2>
+        <div class="arch">
+          <div class="arch-card">
+            <h3>UI</h3>
+            <p>Electron + React. The window never talks to IMAP itself.</p>
+          </div>
+          <div class="arch-card">
+            <h3>Local store</h3>
+            <p>PocketBase (Go) on localhost holds accounts, folders, messages, and calendar.</p>
+          </div>
+          <div class="arch-card">
+            <h3>Sync sidecar</h3>
+            <p>A native Go process syncs IMAP/SMTP and CalDAV in the background.</p>
+          </div>
+          <div class="arch-card">
+            <h3>Hot paths</h3>
+            <p>C compiled to WASM for MIME headers, tokenize, and contact normalize.</p>
+          </div>
+        </div>
+        <p class="section-copy">
+          The renderer talks to PocketBase through Electron IPC. If sync fails, local mail still
+          opens. Status is <code>idle</code>, <code>syncing</code>, <code>error</code>, or
+          <code>offline</code> — never a blocking spinner over the whole app.
+        </p>
+      </section>
+
+      <section>
+        <h2>Install</h2>
+        <dl class="install">
+          <div>
+            <dt>macOS (Apple Silicon)</dt>
+            <dd>Open the <code>.dmg</code>, drag Email into Applications, then right-click → Open once to bypass Gatekeeper.</dd>
+          </div>
+          <div>
+            <dt>Windows</dt>
+            <dd>Run the NSIS installer. If SmartScreen appears, choose More info → Run anyway.</dd>
+          </div>
+          <div>
+            <dt>Ubuntu / Debian</dt>
+            <dd><code>sudo apt install ./Email-*-linux-x64.deb</code></dd>
+          </div>
+          <div>
+            <dt>Fedora / RHEL</dt>
+            <dd><code>sudo dnf install ./Email-*-linux-x64.rpm</code></dd>
+          </div>
+          <div>
+            <dt>Arch / Manjaro</dt>
+            <dd><code>sudo pacman -U ./Email-*-linux-x64.pacman</code></dd>
+          </div>
+          <div>
+            <dt>Any Linux</dt>
+            <dd><code>chmod +x Email-*-linux-x64.AppImage && ./Email-*-linux-x64.AppImage</code></dd>
+          </div>
+        </dl>
+      </section>
+    </main>
+
+    <footer>
+      <p>Local-first. No hosted mailbox. Issues and source on GitHub.</p>
+    </footer>
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

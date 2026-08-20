@@ -7,6 +7,13 @@ import { BackendHost } from "./backend-host";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(__dirname, "..");
 
+function assetsDir(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "assets");
+  }
+  return path.join(repoRoot, "assets");
+}
+
 // Inbox can be thousands of light rows; give the renderer headroom past Chromium defaults.
 app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096");
 
@@ -25,8 +32,7 @@ async function createWindow() {
   console.log("email data dir", dataDir.root);
   backend = new BackendHost({
     dataDir,
-    assetsDir: path.join(repoRoot, "assets"),
-    repoRoot,
+    assetsDir: assetsDir(),
   });
   await backend.start();
 
@@ -61,12 +67,19 @@ async function createWindow() {
     sendStatus({ ...lite, logs: [] });
   });
 
-  const devUrl = process.env.VITE_DEV_SERVER_URL ?? "http://localhost:5173/";
-  console.log("loading UI", { devUrl, preloadPath });
-  await mainWindow.loadURL(devUrl);
-  if (process.env.EMAIL_DEVTOOLS === "1") {
-    mainWindow.webContents.openDevTools({ mode: "detach" });
+  if (!app.isPackaged) {
+    const devUrl = process.env.VITE_DEV_SERVER_URL ?? "http://localhost:5173/";
+    console.log("loading UI", { devUrl, preloadPath, packaged: false });
+    await mainWindow.loadURL(devUrl);
+    if (process.env.EMAIL_DEVTOOLS === "1") {
+      mainWindow.webContents.openDevTools({ mode: "detach" });
+    }
+    return;
   }
+
+  const indexHtml = path.join(__dirname, "..", "dist", "index.html");
+  console.log("loading UI", { indexHtml, preloadPath, packaged: true });
+  await mainWindow.loadFile(indexHtml);
 }
 
 function registerIpc() {

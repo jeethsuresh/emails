@@ -4,14 +4,23 @@
   "private": true,
   "type": "module",
   "description": "Offline-first desktop mail client — Electron + PocketBase WASM + C core",
+  "author": "Jeeth",
+  "homepage": "https://jeethsuresh.github.io/emails/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jeethsuresh/emails.git"
+  },
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "npm run build:native && npm run build:backend && vite",
     "build": "npm run build:native && npm run build:backend && npm run build:wasm && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit && vite build",
+    "build:ui": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit && vite build",
     "build:wasm": "node scripts/build-wasm.mjs",
     "build:backend": "node scripts/build-backend.mjs",
     "build:native": "node scripts/build-c.mjs",
+    "package": "npm run build:native && npm run build:backend && npm run build:ui && electron-builder --config electron-builder.yml --publish never",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "test:release-json": "node scripts/write-latest-json.test.mjs",
     "start": "electron ."
   },
   "dependencies": {
@@ -25,6 +34,7 @@
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "electron": "^37.2.0",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.8.3",
     "vite": "^7.0.0",
     "vite-plugin-electron": "^0.29.0",

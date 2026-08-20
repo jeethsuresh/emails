@@ -1,0 +1,67 @@
+name: Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - website/**
+      - scripts/write-latest-json.mjs
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy GitHub Pages
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Refresh latest.json from GitHub Releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/latest-release.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest")
+          if [[ "$code" == "200" ]]; then
+            tag=$(python3 -c 'import json; print(json.load(open("/tmp/latest-release.json")).get("tag_name",""))')
+            if [[ -n "$tag" ]]; then
+              node scripts/write-latest-json.mjs "$tag" website/latest.json
+            fi
+          else
+            echo "No latest GitHub Release yet (HTTP $code); keeping committed latest.json"
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

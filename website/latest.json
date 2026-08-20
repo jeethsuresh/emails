@@ -1,6 +1,37 @@
 {
-  "version": null,
-  "publishedAt": null,
-  "releaseUrl": "https://github.com/jeethsuresh/emails/releases",
-  "downloads": {}
+  "version": "v0.1.0",
+  "publishedAt": "2026-08-20T22:34:18Z",
+  "releaseUrl": "https://github.com/jeethsuresh/emails/releases/tag/v0.1.0",
+  "downloads": {
+    "deb": {
+      "label": "Ubuntu / Debian",
+      "url": "https://github.com/jeethsuresh/emails/releases/download/v0.1.0/Email-0.1.0-linux-amd64.deb",
+      "filename": "Email-0.1.0-linux-amd64.deb"
+    },
+    "pacman": {
+      "label": "Arch / Manjaro",
+      "url": "https://github.com/jeethsuresh/emails/releases/download/v0.1.0/Email-0.1.0-linux-x64.pacman",
+      "filename": "Email-0.1.0-linux-x64.pacman"
+    },
+    "appimage": {
+      "label": "Linux AppImage",
+      "url": "https://github.com/jeethsuresh/emails/releases/download/v0.1.0/Email-0.1.0-linux-x86_64.AppImage",
+      "filename": "Email-0.1.0-linux-x86_64.AppImage"
+    },
+    "rpm": {
+      "label": "Fedora / RHEL",
+      "url": "https://github.com/jeethsuresh/emails/releases/download/v0.1.0/Email-0.1.0-linux-x86_64.rpm",
+      "filename": "Email-0.1.0-linux-x86_64.rpm"
+    },
+    "mac": {
+      "label": "macOS (Apple Silicon)",
+      "url": "https://github.com/jeethsuresh/emails/releases/download/v0.1.0/Email-0.1.0-mac-arm64.dmg",
+      "filename": "Email-0.1.0-mac-arm64.dmg"
+    },
+    "win": {
+      "label": "Windows",
+      "url": "https://github.com/jeethsuresh/emails/releases/download/v0.1.0/Email-0.1.0-win-x64.exe",
+      "filename": "Email-0.1.0-win-x64.exe"
+    }
+  }
 }

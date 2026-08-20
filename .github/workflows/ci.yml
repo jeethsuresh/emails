@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  check:
+    name: Typecheck and native build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install wasi-sdk
+        run: bash scripts/install-wasi-sdk.sh
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build C WASM
+        run: npm run build:native
+
+      - name: Build Go sidecar
+        run: npm run build:backend
+
+      - name: Go tests
+        run: go test ./...
+        working-directory: backend
+
+      - name: Classify release assets
+        run: node scripts/write-latest-json.test.mjs

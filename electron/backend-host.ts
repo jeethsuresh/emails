@@ -9,7 +9,6 @@ import { loadEmailCore } from "./bridges/email-core";
 export interface BackendHostOptions {
   dataDir: DataDirs;
   assetsDir: string;
-  repoRoot: string;
 }
 
 const emptyStatus = (): SyncStatus => ({
@@ -106,7 +105,8 @@ export class BackendHost {
   private async startInner() {
     await loadEmailCore(path.join(this.opts.assetsDir, "email_core.wasm"));
 
-    const bin = path.join(this.opts.assetsDir, "email-backend");
+    const binName = process.platform === "win32" ? "email-backend.exe" : "email-backend";
+    const bin = path.join(this.opts.assetsDir, binName);
     if (!fs.existsSync(bin)) {
       throw new Error(`missing ${bin} — run npm run build:backend`);
     }
@@ -120,7 +120,8 @@ export class BackendHost {
         EMAIL_DATA_DIR: this.opts.dataDir.pbData,
         EMAIL_ADDR: "127.0.0.1:8090",
       },
-      cwd: this.opts.repoRoot,
+      // Packaged app lives inside an asar; the data dir is always a real folder.
+      cwd: this.opts.dataDir.root,
     });
 
     this.child.stdout.on("data", (buf: Buffer) => {
@@ -316,6 +317,7 @@ function rewriteURL(url: string, base: string) {
 }
 
 function freeListenPort(port: number) {
+  if (process.platform === "win32") return;
   try {
     const out = execSync(`lsof -tiTCP:${port} -sTCP:LISTEN`, {
       encoding: "utf8",

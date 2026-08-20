@@ -1,0 +1,219 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create/update (e.g. v0.1.0). Leave empty to only upload workflow artifacts."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+jobs:
+  package:
+    name: Package (${{ matrix.name }})
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: mac-arm64
+            runs-on: macos-14
+            goos: darwin
+            goarch: arm64
+            electron_args: --mac --arm64
+            artifact_glob: release/*.dmg
+
+          - name: windows-x64
+            runs-on: windows-latest
+            goos: windows
+            goarch: amd64
+            electron_args: --win --x64
+            artifact_glob: release/*.exe
+
+          - name: linux-x64
+            runs-on: ubuntu-22.04
+            goos: linux
+            goarch: amd64
+            electron_args: --linux deb rpm pacman AppImage --x64
+            artifact_glob: |
+              release/*.deb
+              release/*.rpm
+              release/*.pacman
+              release/*.AppImage
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install wasi-sdk
+        shell: bash
+        run: bash scripts/install-wasi-sdk.sh
+
+      - name: Install Linux packagers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # Ubuntu/Debian: `rpm` provides rpmbuild. There is no `rpm-build` package
+          # (that name is Fedora/RHEL-only).
+          sudo apt-get install -y --no-install-recommends \
+            rpm \
+            libarchive-tools \
+            libfuse2 \
+            fakeroot
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build C WASM
+        run: npm run build:native
+
+      - name: Stage Go backend
+        shell: bash
+        run: |
+          chmod +x scripts/stage-backend.sh
+          ./scripts/stage-backend.sh "${{ matrix.goos }}" "${{ matrix.goarch }}"
+
+      - name: Build UI and Electron
+        run: npm run build:ui
+
+      - name: Package with electron-builder
+        shell: bash
+        run: npx electron-builder --config electron-builder.yml ${{ matrix.electron_args }} --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List release outputs
+        shell: bash
+        run: ls -la release || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: emails-${{ matrix.name }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    needs: package
+    runs-on: ubuntu-latest
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+    outputs:
+      tag: ${{ steps.tag.outputs.name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-release
+          pattern: emails-*
+          merge-multiple: true
+
+      - name: Show bundled files
+        run: find dist-release -type f | sort
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: Email ${{ steps.tag.outputs.name }}
+          draft: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist-release/**
+          body: |
+            ## Install notes
+
+            | Platform | Artifact |
+            |----------|----------|
+            | macOS Apple Silicon | `*-mac-arm64.dmg` |
+            | Windows | `*-win-x64.exe` (NSIS) |
+            | Ubuntu / Debian | `*.deb` |
+            | Fedora / RHEL | `*.rpm` |
+            | Arch / Manjaro | `*.pacman` (`pacman -U ./…`) |
+            | Any Linux | `*.AppImage` (chmod +x, then run) |
+
+            Local mail data lives in `~/.emails/`. Builds are **unsigned** unless signing secrets are configured.
+
+            Download page: https://jeethsuresh.github.io/emails/
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pages:
+    name: Deploy GitHub Pages
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+      contents: read
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Write latest.json
+        run: node scripts/write-latest-json.mjs "${{ needs.publish.outputs.tag }}" website/latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

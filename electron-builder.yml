@@ -1,0 +1,49 @@
+appId: com.jeeth.emails
+productName: Email
+directories:
+  output: release
+npmRebuild: false
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+extraResources:
+  - from: assets/
+    to: assets
+    filter:
+      - email-backend
+      - email-backend.exe
+      - email_core.wasm
+publish:
+  provider: github
+  owner: jeethsuresh
+  repo: emails
+mac:
+  target:
+    - dmg
+  category: public.app-category.productivity
+  identity: null
+win:
+  target:
+    - nsis
+linux:
+  executableName: emails
+  category: Network
+  synopsis: Offline-first desktop mail client
+  description: Desktop mail client with a local PocketBase store and IMAP/SMTP sidecar.
+  maintainer: Jeeth <jeeth@users.noreply.github.com>
+  target:
+    - deb
+    - rpm
+    - pacman
+    - AppImage
+deb:
+  packageName: emails
+rpm:
+  packageName: emails
+pacman:
+  packageName: emails
+artifactName: Email-${version}-${os}-${arch}.${ext}
+nsis:
+  oneClick: true
+  shortcutName: Email

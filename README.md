@@ -34,6 +34,25 @@ npm run dev
 | `src/` | React UI |
 | `docs/superpowers/specs/` | Design spec |
 
+## Packaging / releases
+
+Installers are built by GitHub Actions on version tags (macOS Apple Silicon, Windows x64, Linux `.deb` / `.rpm` / `.pacman` / AppImage):
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Local package (current OS only):
+
+```bash
+npm run package
+```
+
+Unsigned builds: macOS needs right-click → Open the first time; Windows may show SmartScreen.
+
+Downloads and an overview live at [jeethsuresh.github.io/emails](https://jeethsuresh.github.io/emails/).
+
 ## Notes
 
 - Local data lives under **`~/.emails/`** (`pb_data`, attachments, index). Override with `EMAIL_HOME` (Electron) or `EMAIL_DATA_DIR` (backend).

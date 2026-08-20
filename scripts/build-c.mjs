@@ -11,20 +11,24 @@ fs.mkdirSync(outDir, { recursive: true });
 
 const src = path.join(root, "native/email_core.c");
 const out = path.join(outDir, "email_core.wasm");
+const clangName = process.platform === "win32" ? "clang.exe" : "clang";
 
 function findClang() {
   const home = os.homedir();
+  const sdk = process.env.WASI_SDK_PATH;
   const candidates = [
-    process.env.WASI_SDK_PATH && path.join(process.env.WASI_SDK_PATH, "bin/clang"),
+    sdk && path.join(sdk, "bin", clangName),
+    sdk && path.join(sdk, "bin", "clang"),
     path.join(home, ".local/wasi-sdk-25.0-arm64-macos/bin/clang"),
     path.join(home, ".local/wasi-sdk-25.0-x86_64-macos/bin/clang"),
-    "clang",
+    path.join(home, ".local/wasi-sdk-25.0-x86_64-linux/bin/clang"),
+    path.join(home, ".local/wasi-sdk-25.0-arm64-linux/bin/clang"),
+    path.join(home, ".local/wasi-sdk-25.0-x86_64-windows/bin/clang.exe"),
   ].filter(Boolean);
   for (const c of candidates) {
-    if (c === "clang") return c;
     if (fs.existsSync(c)) return c;
   }
-  return "clang";
+  return clangName;
 }
 
 const clang = findClang();
@@ -52,7 +56,7 @@ const r = spawnSync(
 if (r.status !== 0) {
   console.error(r.stderr || r.stdout);
   console.error(
-    "\nHint: install wasi-sdk and set WASI_SDK_PATH, or place it under ~/.local/wasi-sdk-25.0-*-macos",
+    "\nHint: install wasi-sdk (scripts/install-wasi-sdk.sh) and set WASI_SDK_PATH, or place it under ~/.local/wasi-sdk-25.0-*",
   );
   process.exit(r.status ?? 1);
 }

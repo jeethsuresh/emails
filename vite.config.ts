@@ -3,7 +3,8 @@ import react from "@vitejs/plugin-react";
 import electron from "vite-plugin-electron/simple";
 import path from "node:path";
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  base: command === "build" ? "./" : "/",
   plugins: [
     react(),
     electron({
@@ -44,4 +45,4 @@ export default defineConfig({
   server: {
     port: 5173,
   },
-});
+}));

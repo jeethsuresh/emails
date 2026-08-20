@@ -1,0 +1,197 @@
+:root {
+  color-scheme: light;
+  --bg: #f3efe6;
+  --ink: #1c1916;
+  --muted: #6b645b;
+  --panel: #fffaf2;
+  --line: #d9d0c3;
+  --accent: #0f6e56;
+  --accent-ink: #f4fff9;
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #e7f2ec 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, #f7e7d6 0%, transparent 50%),
+    var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+body {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+}
+
+.hero h1 {
+  font-family: var(--font-display);
+  font-size: clamp(3rem, 8vw, 4.5rem);
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  margin: 0.15rem 0 0.75rem;
+}
+
+.eyebrow {
+  color: var(--accent);
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.lede {
+  font-size: 1.15rem;
+  color: var(--muted);
+  max-width: 38rem;
+}
+
+.version {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+main section {
+  margin-top: 2.75rem;
+}
+
+h2 {
+  font-family: var(--font-display);
+  font-size: 1.7rem;
+  font-weight: 400;
+  margin: 0 0 0.7rem;
+}
+
+h3 {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 400;
+  margin: 0 0 0.35rem;
+}
+
+.section-copy,
+section p {
+  color: var(--ink);
+}
+
+.features {
+  padding-left: 1.1rem;
+  color: var(--ink);
+}
+
+.features li {
+  margin: 0.35rem 0;
+}
+
+.arch {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr));
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.arch-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+}
+
+.arch-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.downloads {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.75rem;
+}
+
+.download {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.95rem 1rem;
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.download:hover {
+  border-color: var(--accent);
+}
+
+.download strong {
+  font-size: 1.02rem;
+}
+
+.download span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.download.missing {
+  opacity: 0.7;
+}
+
+.fallback {
+  margin-top: 1rem;
+  color: var(--muted);
+}
+
+.fallback a,
+a {
+  color: var(--accent);
+}
+
+.install {
+  margin: 0;
+}
+
+.install > div {
+  margin: 0.85rem 0;
+}
+
+.install dt {
+  font-weight: 600;
+}
+
+.install dd {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+}
+
+footer {
+  margin-top: 3.5rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}

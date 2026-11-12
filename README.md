@@ -36,20 +36,13 @@ npm run dev
 
 ## Packaging / releases
 
-Installers are built by GitHub Actions on version tags (macOS Apple Silicon, Windows x64, Linux `.deb` / `.rpm` / `.pacman` / AppImage):
+Increase the version in `package.json` and `package-lock.json` together. The main-branch Release workflow builds the installers, signs the Apple Silicon app with Developer ID, notarizes the app and its disk image, and publishes a new immutable version tag after verification. The same workflow can be dispatched from `main` to publish an unreleased version.
 
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Local package (current OS only):
+To build a package for development on your current OS:
 
 ```bash
 npm run package
 ```
-
-Unsigned builds: macOS needs right-click → Open the first time; Windows may show SmartScreen.
 
 Downloads and an overview live at [jeethsuresh.github.io/emails](https://jeethsuresh.github.io/emails/).
 

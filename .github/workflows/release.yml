@@ -2,27 +2,42 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to create/update (e.g. v0.1.0). Leave empty to only upload workflow artifacts."
-        required: false
-        type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - id: release
+        run: node scripts/plan-release.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   package:
+    needs: plan
+    if: github.event_name == 'pull_request' || needs.plan.outputs.publish == 'true'
     name: Package (${{ matrix.name }})
     runs-on: ${{ matrix.runs-on }}
     strategy:
@@ -30,11 +45,11 @@ jobs:
       matrix:
         include:
           - name: mac-arm64
-            runs-on: macos-14
+            runs-on: macos-15
             goos: darwin
             goarch: arm64
             electron_args: --mac --arm64
-            artifact_glob: release/*.dmg
+            artifact_glob: release/Email-*-mac-arm64.dmg
 
           - name: windows-x64
             runs-on: windows-latest
@@ -57,6 +72,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -119,66 +136,95 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  publish:
-    name: Publish GitHub Release
-    needs: package
-    runs-on: ubuntu-latest
-    if: >-
-      startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_dispatch' && inputs.tag != '')
-    outputs:
-      tag: ${{ steps.tag.outputs.name }}
+  macos-sign:
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.publish == 'true'
+    needs: [plan, package]
+    runs-on: macos-15
+    timeout-minutes: 55
+    environment: macos-release
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: bash scripts/install-wasi-sdk.sh
+      - run: npm ci
+      - run: npm run build:native
+      - run: bash scripts/stage-backend.sh darwin arm64
+      - run: npm run build:ui
+      - name: Sign, notarize, and verify the Apple Silicon app and disk image
+        run: python3 scripts/package-macos-release.py
+        env:
+          MAC_CERTIFICATE_P12_BASE64: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          MAC_NOTARY_KEY_BASE64: ${{ secrets.MAC_NOTARY_KEY_BASE64 }}
+          MAC_NOTARY_KEY_ID: ${{ secrets.MAC_NOTARY_KEY_ID }}
+          MAC_NOTARY_ISSUER_ID: ${{ secrets.MAC_NOTARY_ISSUER_ID }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-email-mac
+          path: release/Email-*-mac-arm64.dmg
+          if-no-files-found: error
 
-      - name: Resolve tag
-        id: tag
-        shell: bash
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Download all package artifacts
-        uses: actions/download-artifact@v4
+  publish:
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.publish == 'true'
+    needs: [plan, package, macos-sign]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ needs.plan.outputs.tag }}
+    env:
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
         with:
           path: dist-release
           pattern: emails-*
           merge-multiple: true
-
-      - name: Show bundled files
-        run: find dist-release -type f | sort
-
-      - name: Create / update GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/download-artifact@v4
         with:
-          tag_name: ${{ steps.tag.outputs.name }}
-          name: Email ${{ steps.tag.outputs.name }}
-          draft: false
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: |
-            dist-release/**
-          body: |
-            ## Install notes
+          path: signed
+          name: signed-email-mac
+      - name: Publish the verified platform packages
+        shell: bash
+        run: |
+          disk="Email-${RELEASE_TAG#v}-mac-arm64.dmg"
+          test -s "signed/$disk"
+          test -f "dist-release/$disk"
+          test "$(find dist-release -maxdepth 1 -name '*.dmg' -type f | wc -l)" -eq 1
+          cp "signed/$disk" "dist-release/$disk"
+          gh release create "$RELEASE_TAG" dist-release/* --target "$GITHUB_SHA" --draft \
+            --title "Email $RELEASE_TAG" --notes "Email for Apple Silicon is signed with Developer ID and notarized by Apple. Windows and Linux packages are available in the same release."
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq --arg tag "$RELEASE_TAG" -e '.[] | select(.tag_name == $tag and .draft) | .assets' > "$RUNNER_TEMP/email-assets.json"
+          python3 - "$RUNNER_TEMP/email-assets.json" <<'VERIFY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import sys
 
-            | Platform | Artifact |
-            |----------|----------|
-            | macOS Apple Silicon | `*-mac-arm64.dmg` |
-            | Windows | `*-win-x64.exe` (NSIS) |
-            | Ubuntu / Debian | `*.deb` |
-            | Fedora / RHEL | `*.rpm` |
-            | Arch / Manjaro | `*.pacman` (`pacman -U ./…`) |
-            | Any Linux | `*.AppImage` (chmod +x, then run) |
-
-            Local mail data lives in `~/.emails/`. Builds are **unsigned** unless signing secrets are configured.
-
-            Download page: https://jeethsuresh.github.io/emails/
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          uploaded = {asset["name"]: asset for asset in json.loads(Path(sys.argv[1]).read_text())}
+          files = list(Path("dist-release").iterdir())
+          if set(uploaded) != {file.name for file in files}:
+              raise SystemExit("Release asset list differs from the verified packages")
+          for file in files:
+              with file.open("rb") as stream:
+                  digest = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
+              asset = uploaded[file.name]
+              if (asset["size"], asset["digest"]) != (file.stat().st_size, digest):
+                  raise SystemExit(f"Upload verification failed: {file.name}")
+          VERIFY
+          gh release edit "$RELEASE_TAG" --draft=false
 
   pages:
     name: Deploy GitHub Pages

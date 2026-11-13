@@ -39,8 +39,8 @@ def package():
             app = mount / "Email.app"
             verify_application(app, "com.jeeth.emails")
             info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
-            run("lipo", "-verify_arch", "arm64", app / "Contents/MacOS" / info["CFBundleExecutable"])
-            run("lipo", "-verify_arch", "arm64", app / "Contents/Resources/assets/email-backend")
+            run("lipo", app / "Contents/MacOS" / info["CFBundleExecutable"], "-verify_arch", "arm64")
+            run("lipo", app / "Contents/Resources/assets/email-backend", "-verify_arch", "arm64")
         finally:
             run("hdiutil", "detach", mount)
 

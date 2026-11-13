@@ -1,5 +1,6 @@
 appId: com.jeeth.emails
 productName: Email
+icon: resources/icon.png
 directories:
   output: release
 npmRebuild: false

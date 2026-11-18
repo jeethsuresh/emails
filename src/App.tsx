@@ -669,8 +669,12 @@ export function App() {
   const archiveMessage = async (messageId: string) => {
     const folder = findFolderByRole(["archive"], ["archive", "all mail"]);
     if (!folder) throw new Error("No archive folder found");
+    const selection = selectionSeqRef.current;
     await moveMessage(pb, messageId, { folderId: folder.id });
-    await afterMessageAction();
+    if (selectionSeqRef.current === selection) clearMailSelection();
+    refreshCurrentList();
+    setNotice("Message archived.");
+    void refreshFolders().catch((err: unknown) => console.error("refreshFolders failed", err));
   };
 
   const spamMessage = async (messageId: string) => {

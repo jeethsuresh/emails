@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { SafeHtmlFrame } from "./SafeHtmlFrame";
 import { decodeMIMEWords } from "../lib/mimeWords";
 import { priorityLabel } from "../lib/analysis";
@@ -141,6 +141,7 @@ function MessageActionBar({
   onCompose,
   onMove,
   onArchive,
+  archiving,
   onSpam,
   onDelete,
 }: {
@@ -150,6 +151,7 @@ function MessageActionBar({
   onCompose: (mode: ComposeMode) => void;
   onMove: (folderId: string) => void;
   onArchive: () => void;
+  archiving: boolean;
   onSpam: () => void;
   onDelete: () => void;
 }) {
@@ -191,8 +193,8 @@ function MessageActionBar({
             ))}
           </select>
         </label>
-        <button type="button" disabled={busy} onClick={onArchive}>
-          Archive
+        <button type="button" className="mail-primary-action" disabled={busy} onClick={onArchive}>
+          {archiving ? "Archiving…" : "Archive"}
         </button>
         <button type="button" disabled={busy} onClick={onSpam}>
           Spam
@@ -201,7 +203,7 @@ function MessageActionBar({
           Delete
         </button>
       </div>
-      {error ? <span className="error message-toolbar-error">{error}</span> : null}
+      {error ? <span className="error message-toolbar-error" role="alert">{error}</span> : null}
     </div>
   );
 }
@@ -231,7 +233,9 @@ export function MessageView({
   onSpamMessage?: () => Promise<void>;
   onDeleteMessage?: () => Promise<void>;
 }) {
+  const inFlight = useRef(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [composeBusy, setComposeBusy] = useState(false);
   const [composeError, setComposeError] = useState<string | null>(null);
@@ -250,15 +254,20 @@ export function MessageView({
   const subject = decodeMIMEWords(message.subject || "");
   const suggestedReply = analysis?.suggested_reply.trim() ?? "";
 
-  const runAction = async (action: () => Promise<void>) => {
+  const runAction = async (action: () => Promise<void>, archive = false) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setActionBusy(true);
+    setArchiving(archive);
     setActionError(null);
     try {
       await action();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     } finally {
+      inFlight.current = false;
       setActionBusy(false);
+      setArchiving(false);
     }
   };
 
@@ -298,8 +307,9 @@ export function MessageView({
             onMove={(folderId) => {
               if (onMoveMessage) void runAction(() => onMoveMessage(folderId));
             }}
+            archiving={archiving}
             onArchive={() => {
-              if (onArchiveMessage) void runAction(onArchiveMessage);
+              if (onArchiveMessage) void runAction(onArchiveMessage, true);
             }}
             onSpam={() => {
               if (onSpamMessage) void runAction(onSpamMessage);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type PocketBase from "pocketbase";
 import { sendMail, type ComposePrefill } from "../lib/mailApi";
 
@@ -27,7 +27,10 @@ export function ComposeModal({
   const [cc, setCc] = useState(prefill?.cc.join(", ") ?? "");
   const [subject, setSubject] = useState(prefill?.subject ?? "");
   const [body, setBody] = useState(prefill?.bodyText ?? "");
-  const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
+  const [pending, setPending] = useState<"save" | "send" | null>(null);
+  const busy = pending !== null;
+  const close = () => { if (!inFlight.current) onClose(); };
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,7 +62,9 @@ export function ComposeModal({
   };
 
   const runAction = (action: "save" | "send") => {
-    setBusy(true);
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setPending(action);
     setError(null);
     void (async () => {
       try {
@@ -83,24 +88,27 @@ export function ComposeModal({
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
-        setBusy(false);
+        inFlight.current = false;
+        setPending(null);
       }
     })();
   };
 
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+    <div className="modal-backdrop" role="presentation" onClick={close}>
       <form
-        className="modal"
+        className="modal compose-modal"
         role="dialog"
-        aria-label="Compose"
+        aria-labelledby="compose-title"
+        aria-modal="true"
         onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
           runAction("send");
         }}
       >
-        <h2>Compose</h2>
+        <h2 id="compose-title">Compose</h2>
+        <fieldset disabled={busy} className="compose-fields">
         <label>
           From
           {senderOptions.length > 0 ? (
@@ -139,16 +147,18 @@ export function ComposeModal({
           Body
           <textarea rows={12} value={body} onChange={(e) => setBody(e.target.value)} />
         </label>
-        {error && <p className="error">{error}</p>}
+        </fieldset>
+        {error && <p className="error" role="alert">{error}</p>}
+        <div className="sr-only" role="status">{pending === "send" ? "Sending…" : pending === "save" ? "Saving draft…" : ""}</div>
         <div className="modal-actions">
-          <button type="button" onClick={onClose}>
+          <button type="button" onClick={close} disabled={busy}>
             Cancel
           </button>
           <button type="button" disabled={busy || !from.trim()} onClick={() => runAction("save")}>
-            Save draft
+            {pending === "save" ? "Saving draft…" : "Save draft"}
           </button>
-          <button type="submit" disabled={busy}>
-            {busy ? "Working…" : "Send"}
+          <button type="submit" className="mail-primary-action" disabled={busy}>
+            {pending === "send" ? "Sending…" : "Send"}
           </button>
         </div>
       </form>

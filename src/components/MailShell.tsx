@@ -161,7 +161,7 @@ export function MailShell({
 
   const title =
     stacked && stackPane === "reading"
-      ? selectedMessage?.subject || "Message"
+      ? "Message"
       : stacked && stackPane === "list"
         ? contactsOpen
           ? "Contacts"
@@ -261,14 +261,14 @@ export function MailShell({
       >
         {threadMessages.length > 1 ? (
           <nav className="thread-message-stack" aria-label="Messages in thread">
-            {threadMessages.map((message, index) => (
+            {threadMessages.map((message) => (
               <button
                 type="button"
                 key={message.id}
                 className={`${selectedMessage?.id === message.id ? "active " : ""}${message.seen ? "read" : "unread"}`.trim()}
+                aria-current={selectedMessage?.id === message.id ? "true" : undefined}
                 onClick={() => onSelectLoadedMessage(message)}
               >
-                <span>{index + 1}</span>
                 <strong className="clamp-2">
                   {message.seen ? null : <span className="unread-dot" aria-hidden />}
                   {message.from_addr || "(unknown)"}
@@ -279,6 +279,7 @@ export function MailShell({
           </nav>
         ) : null}
         <MessageView
+          key={selectedMessage?.id ?? "empty"}
           message={selectedMessage}
           loadingBody={loadingBody}
           analysis={selectedMessage ? analysisByMessage[selectedMessage.id] : undefined}

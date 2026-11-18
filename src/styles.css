@@ -1895,3 +1895,46 @@ button.linkish {
     overflow-wrap: anywhere;
   }
 }
+
+.reader header h1 {
+  max-width: 36ch;
+  font-size: clamp(1.45rem, 2.55vw, 2.2rem);
+  line-height: 1.15;
+  letter-spacing: -.025em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.reader-meta { flex-wrap: wrap; font-size: .85rem; margin-block: .5rem .75rem; }
+.reader .body { max-width: 70ch; font-size: 1rem; line-height: 1.65; overflow-wrap: anywhere; }
+.message-toolbar { padding-block-start: .65rem; }
+.message-toolbar button, .message-move select { min-height: 36px; padding-inline: .65rem; }
+.compose-fields { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: .65rem; }
+.compose-modal { overflow: auto; max-height: calc(100dvh - 2rem); }
+.compose-modal textarea { min-height: 9rem; }
+.compose-modal .modal-actions { flex-wrap: wrap; }
+.mail-primary-action {
+  position: relative;
+  isolation: isolate;
+  border-color: transparent;
+  background: transparent;
+  color: var(--accent-ink);
+}
+.mail-primary-action::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: transform 165ms cubic-bezier(.2,.8,.25,1.22);
+}
+.mail-primary-action:hover:not(:disabled) { background: transparent; color: var(--accent-ink); }
+.mail-primary-action:hover:not(:disabled)::before { filter: brightness(1.1); }
+.mail-primary-action:active:not(:disabled)::before { transform: scale(1.03,.9); transition-duration: 75ms; }
+@media (pointer: coarse) {
+  .message-toolbar button, .message-move select, .compose-modal button { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mail-primary-action::before { transition: none; }
+  .mail-primary-action:active:not(:disabled)::before { transform: none; filter: brightness(.88); }
+}

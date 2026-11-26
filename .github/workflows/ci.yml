@@ -9,7 +9,7 @@ on:
 jobs:
   check:
     name: Typecheck and native build
-    runs-on: ubuntu-22.04
+    runs-on: gravitas-linux-22
     steps:
       - name: Checkout
         uses: actions/checkout@v4

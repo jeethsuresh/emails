@@ -19,7 +19,7 @@ env:
 
 jobs:
   plan:
-    runs-on: ubuntu-latest
+    runs-on: gravitas-linux
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       publish: ${{ steps.release.outputs.publish }}
@@ -59,7 +59,7 @@ jobs:
             artifact_glob: release/*.exe
 
           - name: linux-x64
-            runs-on: ubuntu-22.04
+            runs-on: gravitas-linux-22
             goos: linux
             goarch: amd64
             electron_args: --linux deb rpm pacman AppImage --x64
@@ -176,7 +176,7 @@ jobs:
   publish:
     if: github.ref == 'refs/heads/main' && needs.plan.outputs.publish == 'true'
     needs: [plan, package, macos-sign]
-    runs-on: ubuntu-latest
+    runs-on: gravitas-linux
     permissions:
       contents: write
     outputs:
@@ -229,7 +229,7 @@ jobs:
   pages:
     name: Deploy GitHub Pages
     needs: publish
-    runs-on: ubuntu-latest
+    runs-on: gravitas-linux
     permissions:
       pages: write
       id-token: write
